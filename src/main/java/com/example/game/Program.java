@@ -32,14 +32,8 @@ public class Program {
 
     public static class ShelterScreen extends GameScreen {
 
-        // ==============================
-        // DEBUG SETTINGS (Turned OFF)
-        // ==============================
         private static final boolean DEBUG_COLLISIONS = false;
 
-        // ==============================
-        // GAME STATISTICS
-        // ==============================
         private int day = 1;
         private int score = 1850;
         private int currencyPoints = 500;
@@ -51,17 +45,12 @@ public class Program {
         private int medicine = 115;
         private int materials = 60;
 
-        // ==============================
-        // GAME TIME
-        // ==============================
         private static final int DAY_DURATION_SECONDS = 300;
         private int secondsRemaining = DAY_DURATION_SECONDS;
         private long lastTickTime = System.currentTimeMillis();
 
-        // ==============================
-        // GAME EVENTS & PLAYER
-        // ==============================
-        private String currentEvent = "Overseer active. Walk up to building doors and press [E].";
+        private String currentEvent =
+                "Overseer active. Walk up to building doors and press [E].";
 
         private int overseerX = 580;
         private int overseerY = 420;
@@ -72,10 +61,8 @@ public class Program {
 
         private String insideBuilding = null;
 
-        // ==============================
-        // ASSETS & STAFF
-        // ==============================
         private BufferedImage mapBgImage;
+        private BufferedImage interiorBgImage;
         private BufferedImage overseerSheet;
         private BufferedImage doctorSheet;
         private BufferedImage guardianSheet;
@@ -86,66 +73,195 @@ public class Program {
 
         private int guardPosX = 520;
         private boolean guardMovingRight = true;
+
         private final int GUARD_MIN_X = 450;
         private final int GUARD_MAX_X = 650;
 
         private List<StaffUnit> staffList = new ArrayList<>();
 
-        // ==============================
-        // CORRECTED COLLISIONS ALIGNED WITH TOP BUILDINGS
-        // ==============================
-        private final Rectangle building1 = new Rectangle(145, 60, 240, 250);
-        private final Rectangle building2 = new Rectangle(405, 60, 240, 250);
-        private final Rectangle building3 = new Rectangle(665, 60, 240, 250);
+        // OUTDOOR MAP BOUNDARIES & COLLISION RECTS
+        private final Rectangle building1 =
+                new Rectangle(145, 60, 240, 250);
 
-        private final Rectangle tents = new Rectangle(150, 465, 250, 75);
+        private final Rectangle building2 =
+                new Rectangle(405, 60, 240, 250);
 
-        private final Rectangle bottomWallLeft = new Rectangle(50, 530, 420, 60);
-        private final Rectangle bottomWallRight = new Rectangle(740, 530, 420, 60);
+        private final Rectangle building3 =
+                new Rectangle(665, 60, 240, 250);
 
-        private final Rectangle leftFence = new Rectangle(0, 0, 70, 720);
-        private final Rectangle rightFence = new Rectangle(1140, 0, 70, 720);
+        private final Rectangle tents =
+                new Rectangle(150, 465, 250, 75);
+
+        private final Rectangle bottomWallLeft =
+                new Rectangle(50, 530, 420, 60);
+
+        private final Rectangle bottomWallRight =
+                new Rectangle(740, 530, 420, 60);
+
+        private final Rectangle leftWall =
+                new Rectangle(50, 60, 95, 470);
+
+        private final Rectangle rightFence =
+                new Rectangle(1140, 0, 70, 720);
+
+        // INDOOR ROOM WALL COLLISION RECTS
+        private final Rectangle indoorLeftRooms =
+                new Rectangle(0, 0, 115, 720);
+
+        private final Rectangle indoorRightRooms =
+                new Rectangle(1085, 0, 115, 720);
+
+        private final Rectangle indoorCenterBlock =
+                new Rectangle(475, 10, 250, 315);
+
+        private final Rectangle indoorMedicalDesk =
+                new Rectangle(470, 340, 260, 30);
+
+        private final Rectangle indoorTopWall =
+                new Rectangle(0, 0, 1200, 35);
+
+        private final Rectangle indoorBottomWall =
+                new Rectangle(0, 675, 1200, 45);
 
         public ShelterScreen() {
             super("SHELTER_SCREEN");
 
             mapBgImage = loadImage("/map_bg.png");
+            interiorBgImage = loadImage("/interior_map.png");
             overseerSheet = loadImage("/overseer_sprite.png");
             doctorSheet = loadImage("/doctor_sprite.png");
             guardianSheet = loadImage("/guardian_sprite.png");
 
-            staffList.add(new StaffUnit("Dr. Alex", "Doctor", 150, 280));
-            staffList.add(new StaffUnit("Engineer Kael", "Engineer", 430, 280));
+            staffList.add(
+                    new StaffUnit("Dr. Alex", "Doctor", 150, 280)
+            );
 
-            Input.keyboard().onKeyPressed(KeyEvent.VK_W, e -> moveOverseer(0, -MOVE_SPEED));
-            Input.keyboard().onKeyPressed(KeyEvent.VK_S, e -> moveOverseer(0, MOVE_SPEED));
-            Input.keyboard().onKeyPressed(KeyEvent.VK_A, e -> moveOverseer(-MOVE_SPEED, 0));
-            Input.keyboard().onKeyPressed(KeyEvent.VK_D, e -> moveOverseer(MOVE_SPEED, 0));
+            staffList.add(
+                    new StaffUnit("Engineer Kael", "Engineer", 430, 280)
+            );
 
-            Input.keyboard().onKeyPressed(KeyEvent.VK_E, e -> interactWithLocation());
-            Input.keyboard().onKeyPressed(KeyEvent.VK_ESCAPE, e -> exitBuilding());
+            Input.keyboard().onKeyPressed(
+                    KeyEvent.VK_W,
+                    e -> moveOverseer(0, -MOVE_SPEED)
+            );
 
-            Input.keyboard().onKeyPressed(KeyEvent.VK_1, e -> distributeRations());
-            Input.keyboard().onKeyPressed(KeyEvent.VK_2, e -> treatWards());
-            Input.keyboard().onKeyPressed(KeyEvent.VK_3, e -> cleanWaste());
-            Input.keyboard().onKeyPressed(KeyEvent.VK_H, e -> hireUnit("Guard", 150));
+            Input.keyboard().onKeyPressed(
+                    KeyEvent.VK_S,
+                    e -> moveOverseer(0, MOVE_SPEED)
+            );
+
+            Input.keyboard().onKeyPressed(
+                    KeyEvent.VK_A,
+                    e -> moveOverseer(-MOVE_SPEED, 0)
+            );
+
+            Input.keyboard().onKeyPressed(
+                    KeyEvent.VK_D,
+                    e -> moveOverseer(MOVE_SPEED, 0)
+            );
+
+            Input.keyboard().onKeyPressed(
+                    KeyEvent.VK_E,
+                    e -> interactWithLocation()
+            );
+
+            Input.keyboard().onKeyPressed(
+                    KeyEvent.VK_ESCAPE,
+                    e -> exitBuilding()
+            );
+
+            Input.keyboard().onKeyPressed(
+                    KeyEvent.VK_1,
+                    e -> distributeRations()
+            );
+
+            Input.keyboard().onKeyPressed(
+                    KeyEvent.VK_2,
+                    e -> treatWards()
+            );
+
+            Input.keyboard().onKeyPressed(
+                    KeyEvent.VK_3,
+                    e -> cleanWaste()
+            );
+
+            Input.keyboard().onKeyPressed(
+                    KeyEvent.VK_H,
+                    e -> hireUnit("Guard", 150)
+            );
 
             Game.loop().attach(this::updateGameLoop);
         }
 
         private BufferedImage loadImage(String path) {
             try (InputStream is = getClass().getResourceAsStream(path)) {
-                if (is != null) return ImageIO.read(is);
-            } catch (Exception e) {
+
+                if (is != null) {
+                    BufferedImage image = ImageIO.read(is);
+
+                    if (image != null) {
+                        System.out.println("Loaded asset: " + path);
+                        return image;
+                    }
+                }
+
                 System.out.println("Could not load asset: " + path);
+
+            } catch (Exception e) {
+                System.out.println(
+                        "Error loading " + path + ": " + e.getMessage()
+                );
             }
+
             return null;
         }
 
-        private boolean canMoveTo(int x, int y) {
-            Rectangle player = new Rectangle(x, y, PLAYER_WIDTH, PLAYER_HEIGHT);
+        private void renderDoctor(Graphics2D g, int x, int y) {
+            if (doctorSheet != null) {
+                g.drawImage(doctorSheet, x, y, 32, 32, null);
+            } else {
+                renderCharacterBadge(g, x, y, Color.GREEN, "Dr. Alex (Doctor)", "DOC");
+            }
+        }
 
-            if (y < 160 || y + PLAYER_HEIGHT > 560) return false;
+        private void renderGuardian(Graphics2D g, int x, int y) {
+            if (guardianSheet != null) {
+                g.drawImage(guardianSheet, x, y, 32, 32, null);
+            } else {
+                renderCharacterBadge(g, x, y, Color.BLUE, "Guard [Patrol]", "GRD");
+            }
+        }
+
+        private void renderOverseer(Graphics2D g, int x, int y) {
+            if (overseerSheet != null) {
+                g.drawImage(overseerSheet, x, y, 32, 32, null);
+            } else {
+                renderCharacterBadge(g, x, y, new Color(241, 196, 15), "OVERSEER", "OSE");
+            }
+        }
+
+        private boolean canMoveTo(int x, int y) {
+
+            Rectangle player = new Rectangle(
+                    x,
+                    y,
+                    PLAYER_WIDTH,
+                    PLAYER_HEIGHT
+            );
+
+            if (insideBuilding != null) {
+                if (player.intersects(indoorLeftRooms)) return false;
+                if (player.intersects(indoorRightRooms)) return false;
+                if (player.intersects(indoorCenterBlock)) return false;
+                if (player.intersects(indoorMedicalDesk)) return false;
+                if (player.intersects(indoorTopWall)) return false;
+                if (player.intersects(indoorBottomWall)) return false;
+                return true;
+            }
+
+            if (y < 60 || y + PLAYER_HEIGHT > 560) {
+                return false;
+            }
 
             if (player.intersects(building1)) return false;
             if (player.intersects(building2)) return false;
@@ -154,78 +270,130 @@ public class Program {
 
             if (player.intersects(bottomWallLeft)) return false;
             if (player.intersects(bottomWallRight)) return false;
-            if (player.intersects(leftFence)) return false;
+            if (player.intersects(leftWall)) return false;
             if (player.intersects(rightFence)) return false;
 
             return true;
         }
 
         private void moveOverseer(int dx, int dy) {
+
             int nextX = overseerX + dx;
             int nextY = overseerY + dy;
 
-            if (insideBuilding != null) {
-                if (nextX >= 80 && nextX + PLAYER_WIDTH <= 1120) overseerX = nextX;
-                if (nextY >= 200 && nextY + PLAYER_HEIGHT <= 600) overseerY = nextY;
-                return;
+            if (canMoveTo(nextX, overseerY)) {
+                overseerX = nextX;
             }
 
-            if (canMoveTo(nextX, overseerY)) overseerX = nextX;
-            if (canMoveTo(overseerX, nextY)) overseerY = nextY;
+            if (canMoveTo(overseerX, nextY)) {
+                overseerY = nextY;
+            }
         }
 
         private void interactWithLocation() {
-            if (insideBuilding != null) return;
 
-            // Door zones right in front of the top building entrances
-            if (overseerX >= 235 && overseerX <= 285 && overseerY >= 295 && overseerY <= 340) {
+            if (insideBuilding != null) {
+                // Exit trigger zone at the bottom door of the interior map
+                if (overseerX >= 550 && overseerX <= 630 && overseerY >= 610) {
+                    exitBuilding();
+                } else {
+                    currentEvent = "Walk down to the EXIT door and press [E] to leave the room.";
+                }
+                return;
+            }
+
+            if (overseerX >= 235 &&
+                    overseerX <= 285 &&
+                    overseerY >= 295 &&
+                    overseerY <= 340) {
+
                 enterBuilding("PATIENT WARD 1");
-            } else if (overseerX >= 495 && overseerX <= 545 && overseerY >= 295 && overseerY <= 340) {
+
+            } else if (overseerX >= 495 &&
+                    overseerX <= 545 &&
+                    overseerY >= 295 &&
+                    overseerY <= 340) {
+
                 enterBuilding("PATIENT WARD 2");
-            } else if (overseerX >= 755 && overseerX <= 805 && overseerY >= 295 && overseerY <= 340) {
+
+            } else if (overseerX >= 755 &&
+                    overseerX <= 805 &&
+                    overseerY >= 295 &&
+                    overseerY <= 340) {
+
                 enterBuilding("RESOURCES / STORAGE");
+
             } else {
-                currentEvent = "Stand directly in front of a building door and press [E].";
+
+                currentEvent =
+                        "Stand directly in front of a building door and press [E].";
             }
         }
 
         private void enterBuilding(String buildingName) {
             insideBuilding = buildingName;
-            overseerX = 150;
-            overseerY = 500;
-            currentEvent = "Entered " + buildingName + ".";
+
+            // Spawn safely away from the bottom exit door inside the room
+            overseerX = 584;
+            overseerY = 480;
+
+            currentEvent = "Entered " + buildingName + ". Explore freely!";
         }
 
         private void exitBuilding() {
             if (insideBuilding != null) {
                 insideBuilding = null;
+
                 overseerX = 580;
                 overseerY = 420;
+
                 currentEvent = "Returned to compound grounds.";
             }
         }
 
         private void updateGameLoop() {
+
             long currentTime = System.currentTimeMillis();
+
             if (currentTime - lastTickTime >= 1000) {
+
                 lastTickTime = currentTime;
 
                 if (guardMovingRight) {
+
                     guardPosX += 4;
-                    if (guardPosX >= GUARD_MAX_X) guardMovingRight = false;
+
+                    if (guardPosX >= GUARD_MAX_X) {
+                        guardMovingRight = false;
+                    }
+
                 } else {
+
                     guardPosX -= 4;
-                    if (guardPosX <= GUARD_MIN_X) guardMovingRight = true;
+
+                    if (guardPosX <= GUARD_MIN_X) {
+                        guardMovingRight = true;
+                    }
                 }
 
                 if (truckActive) {
+
                     truckTimer++;
+
                     if (truckTimer < 6) {
+
                         truckPosX += 40;
-                        if (truckPosX > 480) truckPosX = 480;
+
+                        if (truckPosX > 480) {
+                            truckPosX = 480;
+                        }
+
                     } else if (truckTimer > 15) {
+
                         truckPosX += 40;
+
                         if (truckPosX > 1400) {
+
                             truckActive = false;
                             truckTimer = 0;
                         }
@@ -233,94 +401,165 @@ public class Program {
                 }
 
                 if (secondsRemaining > 0) {
+
                     secondsRemaining--;
+
                 } else {
+
                     triggerDawnSupplyTruck();
                 }
             }
         }
 
         private void triggerDawnSupplyTruck() {
+
             day++;
             secondsRemaining = DAY_DURATION_SECONDS;
+
             truckActive = true;
             truckTimer = 0;
             truckPosX = -250;
 
-            food += 120; water += 120; medicine += 50; materials += 40; currencyPoints += 250;
-            food -= 35; water -= 30;
+            food += 120;
+            water += 120;
+            medicine += 50;
+            materials += 40;
+            currencyPoints += 250;
+
+            food -= 35;
+            water -= 30;
+
             waste = Math.min(100, waste + 10);
+
             score += 150;
 
-            currentEvent = "DAWN: Supply truck delivered supplies at the gate!";
+            currentEvent =
+                    "DAWN: Supply truck delivered supplies at the gate!";
         }
 
         private void distributeRations() {
+
             if (food >= 20 && water >= 20) {
-                food -= 20; water -= 20; score += 25;
-                currentEvent = "Overseer Order: Rations distributed.";
+
+                food -= 20;
+                water -= 20;
+                score += 25;
+
+                currentEvent =
+                        "Overseer Order: Rations distributed.";
+
             } else {
+
                 currentEvent = "Action Failed: Low reserves.";
             }
         }
 
         private void treatWards() {
+
             if (medicine >= 15) {
-                medicine -= 15; score += 30;
-                currentEvent = "Overseer Order: Medical treatment dispatched.";
+
+                medicine -= 15;
+                score += 30;
+
+                currentEvent =
+                        "Overseer Order: Medical treatment dispatched.";
+
             } else {
-                currentEvent = "Action Failed: No medicine left.";
+
+                currentEvent =
+                        "Action Failed: No medicine left.";
             }
         }
 
         private void cleanWaste() {
+
             if (materials >= 10 && waste > 0) {
+
                 materials -= 10;
                 waste = Math.max(0, waste - 15);
                 score += 20;
-                currentEvent = "Overseer Order: Sanitation team cleared waste.";
+
+                currentEvent =
+                        "Overseer Order: Sanitation team cleared waste.";
+
             } else {
-                currentEvent = "Action Failed: Requires 10 Materials.";
+
+                currentEvent =
+                        "Action Failed: Requires 10 Materials.";
             }
         }
 
         private void hireUnit(String role, int cost) {
+
             if (currencyPoints >= cost) {
+
                 currencyPoints -= cost;
-                staffList.add(new StaffUnit(role + " #" + (staffList.size() + 1), role, 580, 480));
-                currentEvent = "Hired new " + role + " stationed at compound!";
+
+                staffList.add(
+                        new StaffUnit(
+                                role + " #" + (staffList.size() + 1),
+                                role,
+                                580,
+                                480
+                        )
+                );
+
+                currentEvent =
+                        "Hired new " + role + " stationed at compound!";
+
             } else {
-                currentEvent = "Hiring Failed: Insufficient points!";
+
+                currentEvent =
+                        "Hiring Failed: Insufficient points!";
             }
         }
 
         @Override
         public void render(Graphics2D g) {
+
             super.render(g);
 
             int screenWidth = Game.window().getWidth();
             int screenHeight = Game.window().getHeight();
 
             if (insideBuilding != null) {
-                g.setColor(new Color(35, 42, 50));
-                g.fillRect(0, 0, screenWidth, screenHeight);
 
-                g.setColor(new Color(45, 52, 60));
-                g.fillRect(60, 180, screenWidth - 120, screenHeight - 220);
-                g.setColor(new Color(46, 204, 113));
-                g.drawRect(60, 180, screenWidth - 120, screenHeight - 220);
+                if (interiorBgImage != null) {
+                    g.drawImage(interiorBgImage, 0, 0, screenWidth, screenHeight, null);
+                } else {
+                    g.setColor(new Color(35, 42, 50));
+                    g.fillRect(0, 0, screenWidth, screenHeight);
+                }
 
-                g.setFont(new Font("Monospaced", Font.BOLD, 20));
+                renderDoctor(g, 430, 390);
+
                 g.setColor(Color.WHITE);
-                TextRenderer.render(g, "ROOM INTERIOR: " + insideBuilding, 90, 215);
+                g.setFont(new Font("SansSerif", Font.BOLD, 10));
 
-                renderCharacterBadge(g, 200, 320, Color.GREEN, "Dr. Alex (Doctor)", "DOC");
-                renderCharacterBadge(g, overseerX, overseerY, new Color(241, 196, 15), "OVERSEER", "OSE");
+                TextRenderer.render(
+                        g,
+                        "Dr. Alex - Doctor",
+                        410,
+                        435
+                );
+
+                renderOverseer(g, overseerX, overseerY);
 
             } else {
+
                 if (mapBgImage != null) {
-                    g.drawImage(mapBgImage, 0, 0, screenWidth, screenHeight, null);
+
+                    g.drawImage(
+                            mapBgImage,
+                            0,
+                            0,
+                            screenWidth,
+                            screenHeight,
+                            null
+                    );
+
                 } else {
+
                     g.setColor(new Color(30, 35, 42));
                     g.fillRect(0, 0, screenWidth, screenHeight);
                 }
@@ -329,74 +568,162 @@ public class Program {
                     drawSupplyTruck(g, truckPosX, 490);
                 }
 
-                renderCharacterBadge(g, guardPosX, 470, Color.BLUE, "Guard [Patrol]", "GRD");
-                renderCharacterBadge(g, overseerX, overseerY, new Color(241, 196, 15), "OVERSEER", "OSE");
+                renderDoctor(g, 150, 320);
 
-                // Debug layer is disabled (DEBUG_COLLISIONS = false), so no red/green overlay boxes will show.
+                g.setColor(Color.WHITE);
+                g.setFont(new Font("SansSerif", Font.BOLD, 10));
+
+                TextRenderer.render(
+                        g,
+                        "Dr. Alex",
+                        140,
+                        365
+                );
+
+                renderGuardian(g, guardPosX, 470);
+
+                renderOverseer(g, overseerX, overseerY);
             }
 
-            // HUD DASHBOARD
             g.setColor(new Color(15, 20, 25, 220));
             g.fillRect(20, 15, screenWidth - 40, 150);
+
             g.setColor(new Color(46, 204, 113));
             g.drawRect(20, 15, screenWidth - 40, 150);
 
             g.setFont(new Font("Monospaced", Font.BOLD, 18));
             g.setColor(new Color(46, 204, 113));
-            TextRenderer.render(g, "QUARANTINE HAVEN [OVERSEER SIMULATOR]", 35, 40);
+
+            TextRenderer.render(
+                    g,
+                    "QUARANTINE HAVEN [OVERSEER SIMULATOR]",
+                    35,
+                    40
+            );
 
             int minutes = secondsRemaining / 60;
             int seconds = secondsRemaining % 60;
-            String timeStr = String.format("%02d:%02d", minutes, seconds);
+
+            String timeStr = String.format(
+                    "%02d:%02d",
+                    minutes,
+                    seconds
+            );
 
             g.setFont(new Font("SansSerif", Font.BOLD, 13));
             g.setColor(Color.WHITE);
-            String topInfo = String.format("DAY: %d | NEXT TRUCK: %s | SCORE: %d | PTS: %d | POWER: %d%%", day, timeStr, score, currencyPoints, power);
+
+            String topInfo = String.format(
+                    "DAY: %d | NEXT TRUCK: %s | SCORE: %d | PTS: %d | POWER: %d%%",
+                    day,
+                    timeStr,
+                    score,
+                    currencyPoints,
+                    power
+            );
+
             TextRenderer.render(g, topInfo, 35, 62);
 
-            String resInfo = String.format("RESOURCES -> Food: %d | Water: %d | Medicine: %d | Materials: %d", food, water, medicine, materials);
+            String resInfo = String.format(
+                    "RESOURCES -> Food: %d | Water: %d | Medicine: %d | Materials: %d",
+                    food,
+                    water,
+                    medicine,
+                    materials
+            );
+
             g.setColor(new Color(241, 196, 15));
+
             TextRenderer.render(g, resInfo, 35, 84);
 
             g.setColor(Color.LIGHT_GRAY);
-            TextRenderer.render(g, "WASTE CAPACITY: " + waste + "%", 35, 106);
+
+            TextRenderer.render(
+                    g,
+                    "WASTE CAPACITY: " + waste + "%",
+                    35,
+                    106
+            );
+
             g.setColor(new Color(231, 76, 60));
             g.fillRect(175, 95, waste * 2, 12);
+
             g.setColor(Color.DARK_GRAY);
             g.drawRect(175, 95, 200, 12);
 
             g.setColor(Color.CYAN);
-            TextRenderer.render(g, "EVENT LOG: " + currentEvent, 35, 128);
+
+            TextRenderer.render(
+                    g,
+                    "EVENT LOG: " + currentEvent,
+                    35,
+                    128
+            );
 
             g.setFont(new Font("SansSerif", Font.PLAIN, 11));
             g.setColor(new Color(200, 200, 200));
-            TextRenderer.render(g, "CONTROLS: [WASD] Move | [E] Enter Door | [ESC] Exit Room | [1-3, H] Actions", 35, 148);
+
+            TextRenderer.render(
+                    g,
+                    "CONTROLS: [WASD] Move | [E] Enter/Exit Door | [ESC] Exit Room | [1-3, H] Actions",
+                    35,
+                    148
+            );
         }
 
-        private void renderCharacterBadge(Graphics2D g, int x, int y, Color color, String label, String tag) {
+        private void renderCharacterBadge(
+                Graphics2D g,
+                int x,
+                int y,
+                Color color,
+                String label,
+                String tag
+        ) {
+
             g.setColor(new Color(15, 20, 25, 220));
             g.fillOval(x - 2, y - 2, 34, 34);
 
             g.setColor(color);
             g.fillOval(x, y, 30, 30);
+
             g.setColor(Color.BLACK);
             g.drawRect(x, y, 30, 30);
 
             g.setFont(new Font("Monospaced", Font.BOLD, 10));
             g.setColor(Color.BLACK);
-            TextRenderer.render(g, tag, x + 5, y + 19);
+
+            TextRenderer.render(
+                    g,
+                    tag,
+                    x + 5,
+                    y + 19
+            );
 
             g.setColor(Color.WHITE);
             g.setFont(new Font("SansSerif", Font.BOLD, 10));
-            TextRenderer.render(g, label, x - 10, y + 46);
+
+            TextRenderer.render(
+                    g,
+                    label,
+                    x - 10,
+                    y + 46
+            );
         }
 
         private void drawSupplyTruck(Graphics2D g, int x, int y) {
+
             g.setColor(new Color(190, 200, 210));
             g.fillRect(x, y, 110, 40);
+
             g.setColor(Color.BLACK);
             g.drawRect(x, y, 110, 40);
-            TextRenderer.render(g, "Supply Truck", x + 12, y + 25);
+
+            TextRenderer.render(
+                    g,
+                    "Supply Truck",
+                    x + 12,
+                    y + 25
+            );
 
             g.setColor(new Color(41, 128, 185));
             g.fillRect(x + 110, y + 10, 30, 30);
