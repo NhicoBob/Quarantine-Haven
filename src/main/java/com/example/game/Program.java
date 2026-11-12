@@ -16,6 +16,7 @@ import java.awt.image.BufferedImage;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 
 public class Program {
 
@@ -39,6 +40,7 @@ public class Program {
         private int currencyPoints = 500;
         private int power = 98;
         private int waste = 22;
+        private int stackedTrashCount = 0;
 
         private int food = 310;
         private int water = 290;
@@ -67,16 +69,51 @@ public class Program {
         private BufferedImage doctorSheet;
         private BufferedImage guardianSheet;
 
-        private int truckPosX = -250;
-        private boolean truckActive = false;
-        private int truckTimer = 0;
+        // TRUCKS
+        private int supplyTruckPosX = -120;
+        private boolean supplyTruckActive = false;
+        private int supplyTruckTimer = 0;
 
-        private int guardPosX = 520;
-        private boolean guardMovingRight = true;
+        private int garbageTruckPosX = -120;
+        private boolean garbageTruckActive = false;
+        private int garbageTruckTimer = 0;
 
-        private final int GUARD_MIN_X = 450;
-        private final int GUARD_MAX_X = 650;
+        // ROAD TRAFFIC CARS
+        private int car1X = -70;
+        private int car2X = 1220;
 
+        // DOCTOR MOVEMENT & IDLE/ROAM SYSTEM
+        private float doctorX = 150;
+        private float doctorY = 320;
+        private float doctorTargetX = 150;
+        private float doctorTargetY = 320;
+        private boolean doctorRushing = false;
+        private boolean doctorInsideBuilding = false;
+        private long doctorInsideTimer = 0;
+        private long doctorIdleTimer = System.currentTimeMillis();
+        private Random random = new Random();
+
+        // GUARDS WITH 2-STEP TRASH MISSION (Bldg 3 -> Right of Small Building)
+        private static class GuardData {
+            float posX;
+            float targetX;
+            float minX;
+            float maxX;
+            int trashState = 0; // 0: Patrol, 1: Go to Bldg 3, 2: Deliver to right of small building
+            float originalY = 470;
+            float currentY = 470;
+            long idleTimer = System.currentTimeMillis();
+            Random rand = new Random();
+
+            public GuardData(float startX, float min, float max) {
+                this.posX = startX;
+                this.targetX = startX;
+                this.minX = min;
+                this.maxX = max;
+            }
+        }
+
+        private List<GuardData> guards = new ArrayList<>();
         private List<StaffUnit> staffList = new ArrayList<>();
 
         // OUTDOOR MAP BOUNDARIES & COLLISION RECTS
@@ -106,22 +143,25 @@ public class Program {
 
         // INDOOR ROOM WALL COLLISION RECTS
         private final Rectangle indoorLeftRooms =
-                new Rectangle(0, 0, 115, 720);
+                new Rectangle(0, 0, 160, 720);
 
         private final Rectangle indoorRightRooms =
-                new Rectangle(1085, 0, 115, 720);
+                new Rectangle(1040, 0, 160, 720);
 
         private final Rectangle indoorCenterBlock =
-                new Rectangle(475, 10, 250, 315);
+                new Rectangle(380, 40, 440, 260);
 
         private final Rectangle indoorMedicalDesk =
-                new Rectangle(470, 340, 260, 30);
+                new Rectangle(470, 320, 260, 40);
 
         private final Rectangle indoorTopWall =
                 new Rectangle(0, 0, 1200, 35);
 
-        private final Rectangle indoorBottomWall =
-                new Rectangle(0, 675, 1200, 45);
+        private final Rectangle indoorBottomWallLeft =
+                new Rectangle(0, 670, 550, 50);
+
+        private final Rectangle indoorBottomWallRight =
+                new Rectangle(630, 670, 570, 50);
 
         public ShelterScreen() {
             super("SHELTER_SCREEN");
@@ -131,6 +171,11 @@ public class Program {
             overseerSheet = loadImage("/overseer_sprite.png");
             doctorSheet = loadImage("/doctor_sprite.png");
             guardianSheet = loadImage("/guardian_sprite.png");
+
+            guards.add(new GuardData(420, 390, 500));
+            guards.add(new GuardData(550, 520, 650));
+            guards.add(new GuardData(750, 680, 900));
+            guards.add(new GuardData(1000, 920, 1100));
 
             staffList.add(
                     new StaffUnit("Dr. Alex", "Doctor", 150, 280)
@@ -172,17 +217,17 @@ public class Program {
 
             Input.keyboard().onKeyPressed(
                     KeyEvent.VK_1,
-                    e -> distributeRations()
+                    e -> distributeRationsAndRushDoctor(1)
             );
 
             Input.keyboard().onKeyPressed(
                     KeyEvent.VK_2,
-                    e -> treatWards()
+                    e -> treatWardsAndRushDoctor(2)
             );
 
             Input.keyboard().onKeyPressed(
                     KeyEvent.VK_3,
-                    e -> cleanWaste()
+                    e -> cleanWasteAndCarryTrash()
             );
 
             Input.keyboard().onKeyPressed(
@@ -222,14 +267,20 @@ public class Program {
             } else {
                 renderCharacterBadge(g, x, y, Color.GREEN, "Dr. Alex (Doctor)", "DOC");
             }
+            g.setColor(Color.WHITE);
+            g.setFont(new Font("SansSerif", Font.BOLD, 10));
+            TextRenderer.render(g, "Dr. Alex", x - 10, y + 46);
         }
 
-        private void renderGuardian(Graphics2D g, int x, int y) {
+        private void renderGuardian(Graphics2D g, int x, int y, String label) {
             if (guardianSheet != null) {
                 g.drawImage(guardianSheet, x, y, 32, 32, null);
             } else {
-                renderCharacterBadge(g, x, y, Color.BLUE, "Guard [Patrol]", "GRD");
+                renderCharacterBadge(g, x, y, Color.BLUE, label, "GRD");
             }
+            g.setColor(Color.WHITE);
+            g.setFont(new Font("SansSerif", Font.BOLD, 10));
+            TextRenderer.render(g, label, x - 10, y + 46);
         }
 
         private void renderOverseer(Graphics2D g, int x, int y) {
@@ -238,6 +289,9 @@ public class Program {
             } else {
                 renderCharacterBadge(g, x, y, new Color(241, 196, 15), "OVERSEER", "OSE");
             }
+            g.setColor(Color.WHITE);
+            g.setFont(new Font("SansSerif", Font.BOLD, 10));
+            TextRenderer.render(g, "OVERSEER", x - 10, y + 46);
         }
 
         private boolean canMoveTo(int x, int y) {
@@ -255,7 +309,8 @@ public class Program {
                 if (player.intersects(indoorCenterBlock)) return false;
                 if (player.intersects(indoorMedicalDesk)) return false;
                 if (player.intersects(indoorTopWall)) return false;
-                if (player.intersects(indoorBottomWall)) return false;
+                if (player.intersects(indoorBottomWallLeft)) return false;
+                if (player.intersects(indoorBottomWallRight)) return false;
                 return true;
             }
 
@@ -293,8 +348,7 @@ public class Program {
         private void interactWithLocation() {
 
             if (insideBuilding != null) {
-                // Exit trigger zone at the bottom door of the interior map
-                if (overseerX >= 550 && overseerX <= 630 && overseerY >= 610) {
+                if (overseerX >= 550 && overseerX <= 630 && overseerY >= 630) {
                     exitBuilding();
                 } else {
                     currentEvent = "Walk down to the EXIT door and press [E] to leave the room.";
@@ -333,7 +387,6 @@ public class Program {
         private void enterBuilding(String buildingName) {
             insideBuilding = buildingName;
 
-            // Spawn safely away from the bottom exit door inside the room
             overseerX = 584;
             overseerY = 480;
 
@@ -353,72 +406,156 @@ public class Program {
 
         private void updateGameLoop() {
 
+            // Traffic motion
+            car1X += 4;
+            if (car1X > 1250) {
+                car1X = -70;
+            }
+
+            car2X -= 5;
+            if (car2X < -70) {
+                car2X = 1220;
+            }
+
+            // Update Doctor Rush & 2-Second Disappearance System
+            if (doctorRushing) {
+                if (doctorInsideBuilding) {
+                    if (System.currentTimeMillis() - doctorInsideTimer >= 2000) {
+                        doctorInsideBuilding = false;
+                        doctorTargetX = 150;
+                        doctorTargetY = 320;
+                    }
+                } else {
+                    if (doctorX < doctorTargetX) doctorX += 1.0f;
+                    else if (doctorX > doctorTargetX) doctorX -= 1.0f;
+
+                    if (doctorY < doctorTargetY) doctorY += 1.0f;
+                    else if (doctorY > doctorTargetY) doctorY -= 1.0f;
+
+                    if (Math.abs(doctorX - doctorTargetX) <= 1.5f && Math.abs(doctorY - doctorTargetY) <= 1.5f) {
+                        if (doctorTargetX != 150) {
+                            doctorInsideBuilding = true;
+                            doctorInsideTimer = System.currentTimeMillis();
+                        } else {
+                            doctorRushing = false;
+                        }
+                    }
+                }
+            } else {
+                if (System.currentTimeMillis() - doctorIdleTimer > 4000) {
+                    doctorIdleTimer = System.currentTimeMillis();
+                    doctorTargetX = 130 + random.nextInt(60);
+                    doctorTargetY = 300 + random.nextInt(40);
+                }
+                if (doctorX < doctorTargetX) doctorX += 0.5f;
+                else if (doctorX > doctorTargetX) doctorX -= 0.5f;
+
+                if (doctorY < doctorTargetY) doctorY += 0.5f;
+                else if (doctorY > doctorTargetY) doctorY -= 0.5f;
+            }
+
+            // Update Guards with 2-step trash task:
+            // State 1: Walk to Building 3 door (x: 770, y: 310) to get trash
+            // State 2: Walk to right side of small building (x: 340, y: 480) to drop trash
+            for (GuardData guard : guards) {
+                if (guard.trashState == 1) {
+                    if (guard.posX < 770) guard.posX += 1.2f;
+                    else if (guard.posX > 770) guard.posX -= 1.2f;
+
+                    if (guard.currentY > 310) guard.currentY -= 1.2f;
+                    else if (guard.currentY < 310) guard.currentY += 1.2f;
+
+                    if (Math.abs(guard.posX - 770) <= 2f && Math.abs(guard.currentY - 310) <= 2f) {
+                        guard.trashState = 2; // Got trash, now take it to right of small building
+                    }
+                } else if (guard.trashState == 2) {
+                    if (guard.posX < 340) guard.posX += 1.2f;
+                    else if (guard.posX > 340) guard.posX -= 1.2f;
+
+                    if (guard.currentY < 480) guard.currentY += 1.2f;
+                    else if (guard.currentY > 480) guard.currentY -= 1.2f;
+
+                    if (Math.abs(guard.posX - 340) <= 2f && Math.abs(guard.currentY - 480) <= 2f) {
+                        stackedTrashCount++;
+                        guard.trashState = 0; // Done, return to patrol
+                    }
+                } else {
+                    if (System.currentTimeMillis() - guard.idleTimer > 5000) {
+                        guard.idleTimer = System.currentTimeMillis();
+                        guard.targetX = guard.minX + guard.rand.nextFloat() * (guard.maxX - guard.minX);
+                    }
+
+                    if (guard.posX < guard.targetX) guard.posX += 0.6f;
+                    else if (guard.posX > guard.targetX) guard.posX -= 0.6f;
+
+                    if (guard.currentY < guard.originalY) guard.currentY += 0.3f;
+                    else if (guard.currentY > guard.originalY) guard.currentY -= 0.3f;
+                }
+            }
+
             long currentTime = System.currentTimeMillis();
 
             if (currentTime - lastTickTime >= 1000) {
 
                 lastTickTime = currentTime;
 
-                if (guardMovingRight) {
-
-                    guardPosX += 4;
-
-                    if (guardPosX >= GUARD_MAX_X) {
-                        guardMovingRight = false;
-                    }
-
-                } else {
-
-                    guardPosX -= 4;
-
-                    if (guardPosX <= GUARD_MIN_X) {
-                        guardMovingRight = true;
+                // Supply Truck
+                if (supplyTruckActive) {
+                    supplyTruckTimer++;
+                    if (supplyTruckTimer < 6) {
+                        supplyTruckPosX += 40;
+                        if (supplyTruckPosX > 480) supplyTruckPosX = 480;
+                    } else if (supplyTruckTimer > 15) {
+                        supplyTruckPosX += 40;
+                        if (supplyTruckPosX > 1300) {
+                            supplyTruckActive = false;
+                            supplyTruckTimer = 0;
+                        }
                     }
                 }
 
-                if (truckActive) {
-
-                    truckTimer++;
-
-                    if (truckTimer < 6) {
-
-                        truckPosX += 40;
-
-                        if (truckPosX > 480) {
-                            truckPosX = 480;
-                        }
-
-                    } else if (truckTimer > 15) {
-
-                        truckPosX += 40;
-
-                        if (truckPosX > 1400) {
-
-                            truckActive = false;
-                            truckTimer = 0;
+                // Garbage Truck
+                if (garbageTruckActive) {
+                    garbageTruckTimer++;
+                    if (garbageTruckTimer < 6) {
+                        garbageTruckPosX += 40;
+                        if (garbageTruckPosX > 480) garbageTruckPosX = 480;
+                    } else if (garbageTruckTimer > 15) {
+                        garbageTruckPosX += 40;
+                        if (garbageTruckPosX > 1300) {
+                            garbageTruckActive = false;
+                            garbageTruckTimer = 0;
                         }
                     }
                 }
 
                 if (secondsRemaining > 0) {
-
                     secondsRemaining--;
-
                 } else {
-
-                    triggerDawnSupplyTruck();
+                    triggerDawnTrucks();
                 }
             }
         }
 
-        private void triggerDawnSupplyTruck() {
-
+        private void triggerDawnTrucks() {
             day++;
             secondsRemaining = DAY_DURATION_SECONDS;
 
-            truckActive = true;
-            truckTimer = 0;
-            truckPosX = -250;
+            // Activate Supply Truck
+            supplyTruckActive = true;
+            supplyTruckTimer = 0;
+            supplyTruckPosX = -120;
+
+            // Activate Garbage Truck
+            garbageTruckActive = true;
+            garbageTruckTimer = 0;
+            garbageTruckPosX = -300;
+
+            // Clear stacked trash and give bonus points
+            if (stackedTrashCount > 0) {
+                score += stackedTrashCount * 50;
+                stackedTrashCount = 0;
+            }
 
             food += 120;
             water += 120;
@@ -430,100 +567,88 @@ public class Program {
             water -= 30;
 
             waste = Math.min(100, waste + 10);
-
             score += 150;
 
-            currentEvent =
-                    "DAWN: Supply truck delivered supplies at the gate!";
+            currentEvent = "DAWN: Supply & Garbage trucks arrived at the gate!";
         }
 
-        private void distributeRations() {
-
+        private void distributeRationsAndRushDoctor(int buildingNum) {
             if (food >= 20 && water >= 20) {
-
                 food -= 20;
                 water -= 20;
                 score += 25;
 
-                currentEvent =
-                        "Overseer Order: Rations distributed.";
-
+                doctorRushing = true;
+                doctorInsideBuilding = false;
+                if (buildingNum == 1) {
+                    doctorTargetX = 250;
+                    doctorTargetY = 315;
+                    currentEvent = "Overseer Order: Rations distributed. Dr. Alex rushing to Building 1!";
+                } else {
+                    doctorTargetX = 510;
+                    doctorTargetY = 315;
+                    currentEvent = "Overseer Order: Rations distributed. Dr. Alex rushing to Building 2!";
+                }
             } else {
-
                 currentEvent = "Action Failed: Low reserves.";
             }
         }
 
-        private void treatWards() {
-
+        private void treatWardsAndRushDoctor(int buildingNum) {
             if (medicine >= 15) {
-
                 medicine -= 15;
                 score += 30;
 
-                currentEvent =
-                        "Overseer Order: Medical treatment dispatched.";
-
+                doctorRushing = true;
+                doctorInsideBuilding = false;
+                if (buildingNum == 1) {
+                    doctorTargetX = 250;
+                    doctorTargetY = 315;
+                    currentEvent = "Overseer Order: Medical treatment. Dr. Alex rushing to Building 1!";
+                } else {
+                    doctorTargetX = 510;
+                    doctorTargetY = 315;
+                    currentEvent = "Overseer Order: Medical treatment. Dr. Alex rushing to Building 2!";
+                }
             } else {
-
-                currentEvent =
-                        "Action Failed: No medicine left.";
+                currentEvent = "Action Failed: No medicine left.";
             }
         }
 
-        private void cleanWaste() {
-
+        private void cleanWasteAndCarryTrash() {
             if (materials >= 10 && waste > 0) {
-
                 materials -= 10;
                 waste = Math.max(0, waste - 15);
                 score += 20;
 
-                currentEvent =
-                        "Overseer Order: Sanitation team cleared waste.";
+                if (!guards.isEmpty()) {
+                    guards.get(0).trashState = 1; // Step 1: Go to Building 3 for trash
+                }
 
+                currentEvent = "Overseer Order: Guard heading to Building 3 to collect trash!";
             } else {
-
-                currentEvent =
-                        "Action Failed: Requires 10 Materials.";
+                currentEvent = "Action Failed: Requires 10 Materials or 0 Waste.";
             }
         }
 
         private void hireUnit(String role, int cost) {
-
             if (currencyPoints >= cost) {
-
                 currencyPoints -= cost;
-
-                staffList.add(
-                        new StaffUnit(
-                                role + " #" + (staffList.size() + 1),
-                                role,
-                                580,
-                                480
-                        )
-                );
-
-                currentEvent =
-                        "Hired new " + role + " stationed at compound!";
-
+                guards.add(new GuardData(580, 400, 700));
+                currentEvent = "Hired new " + role + " stationed at compound!";
             } else {
-
-                currentEvent =
-                        "Hiring Failed: Insufficient points!";
+                currentEvent = "Hiring Failed: Insufficient points!";
             }
         }
 
         @Override
         public void render(Graphics2D g) {
-
             super.render(g);
 
             int screenWidth = Game.window().getWidth();
             int screenHeight = Game.window().getHeight();
 
             if (insideBuilding != null) {
-
                 if (interiorBgImage != null) {
                     g.drawImage(interiorBgImage, 0, 0, screenWidth, screenHeight, null);
                 } else {
@@ -532,55 +657,44 @@ public class Program {
                 }
 
                 renderDoctor(g, 430, 390);
-
-                g.setColor(Color.WHITE);
-                g.setFont(new Font("SansSerif", Font.BOLD, 10));
-
-                TextRenderer.render(
-                        g,
-                        "Dr. Alex - Doctor",
-                        410,
-                        435
-                );
-
                 renderOverseer(g, overseerX, overseerY);
 
             } else {
-
                 if (mapBgImage != null) {
-
-                    g.drawImage(
-                            mapBgImage,
-                            0,
-                            0,
-                            screenWidth,
-                            screenHeight,
-                            null
-                    );
-
+                    g.drawImage(mapBgImage, 0, 0, screenWidth, screenHeight, null);
                 } else {
-
                     g.setColor(new Color(30, 35, 42));
                     g.fillRect(0, 0, screenWidth, screenHeight);
                 }
 
-                if (truckActive) {
-                    drawSupplyTruck(g, truckPosX, 490);
+                drawRoadCar(g, car1X, 690, new Color(41, 128, 185));
+                drawRoadCar(g, car2X, 720, new Color(231, 76, 60));
+
+                if (supplyTruckActive) {
+                    drawSupplyTruck(g, supplyTruckPosX, 695);
                 }
 
-                renderDoctor(g, 150, 320);
+                if (garbageTruckActive) {
+                    drawGarbageTruck(g, garbageTruckPosX, 725);
+                }
 
-                g.setColor(Color.WHITE);
-                g.setFont(new Font("SansSerif", Font.BOLD, 10));
+                // Render stacked trash bags safely at the right side of the small building (x: 340, y: 480)
+                if (stackedTrashCount > 0) {
+                    drawStackedTrash(g, 340, 480, stackedTrashCount);
+                }
 
-                TextRenderer.render(
-                        g,
-                        "Dr. Alex",
-                        140,
-                        365
-                );
+                if (!doctorInsideBuilding) {
+                    renderDoctor(g, (int) doctorX, (int) doctorY);
+                }
 
-                renderGuardian(g, guardPosX, 470);
+                for (int i = 0; i < guards.size(); i++) {
+                    GuardData gData = guards.get(i);
+                    String statusLabel = " [Patrol]";
+                    if (gData.trashState == 1) statusLabel = " [GETTING TRASH]";
+                    else if (gData.trashState == 2) statusLabel = " [CARRYING TRASH]";
+                    String label = "Guard #" + (i + 1) + statusLabel;
+                    renderGuardian(g, (int)gData.posX, (int)gData.currentY, label);
+                }
 
                 renderOverseer(g, overseerX, overseerY);
             }
@@ -593,144 +707,95 @@ public class Program {
 
             g.setFont(new Font("Monospaced", Font.BOLD, 18));
             g.setColor(new Color(46, 204, 113));
-
-            TextRenderer.render(
-                    g,
-                    "QUARANTINE HAVEN [OVERSEER SIMULATOR]",
-                    35,
-                    40
-            );
+            TextRenderer.render(g, "QUARANTINE HAVEN [OVERSEER SIMULATOR]", 35, 40);
 
             int minutes = secondsRemaining / 60;
             int seconds = secondsRemaining % 60;
-
-            String timeStr = String.format(
-                    "%02d:%02d",
-                    minutes,
-                    seconds
-            );
+            String timeStr = String.format("%02d:%02d", minutes, seconds);
 
             g.setFont(new Font("SansSerif", Font.BOLD, 13));
             g.setColor(Color.WHITE);
-
-            String topInfo = String.format(
-                    "DAY: %d | NEXT TRUCK: %s | SCORE: %d | PTS: %d | POWER: %d%%",
-                    day,
-                    timeStr,
-                    score,
-                    currencyPoints,
-                    power
-            );
-
+            String topInfo = String.format("DAY: %d | NEXT TRUCK: %s | SCORE: %d | PTS: %d | POWER: %d%%", day, timeStr, score, currencyPoints, power);
             TextRenderer.render(g, topInfo, 35, 62);
 
-            String resInfo = String.format(
-                    "RESOURCES -> Food: %d | Water: %d | Medicine: %d | Materials: %d",
-                    food,
-                    water,
-                    medicine,
-                    materials
-            );
-
+            String resInfo = String.format("RESOURCES -> Food: %d | Water: %d | Medicine: %d | Materials: %d", food, water, medicine, materials);
             g.setColor(new Color(241, 196, 15));
-
             TextRenderer.render(g, resInfo, 35, 84);
 
             g.setColor(Color.LIGHT_GRAY);
-
-            TextRenderer.render(
-                    g,
-                    "WASTE CAPACITY: " + waste + "%",
-                    35,
-                    106
-            );
+            TextRenderer.render(g, "WASTE CAPACITY: " + waste + "% | TRASH PILES: " + stackedTrashCount, 35, 106);
 
             g.setColor(new Color(231, 76, 60));
             g.fillRect(175, 95, waste * 2, 12);
-
             g.setColor(Color.DARK_GRAY);
             g.drawRect(175, 95, 200, 12);
 
             g.setColor(Color.CYAN);
-
-            TextRenderer.render(
-                    g,
-                    "EVENT LOG: " + currentEvent,
-                    35,
-                    128
-            );
+            TextRenderer.render(g, "EVENT LOG: " + currentEvent, 35, 128);
 
             g.setFont(new Font("SansSerif", Font.PLAIN, 11));
             g.setColor(new Color(200, 200, 200));
-
-            TextRenderer.render(
-                    g,
-                    "CONTROLS: [WASD] Move | [E] Enter/Exit Door | [ESC] Exit Room | [1-3, H] Actions",
-                    35,
-                    148
-            );
+            TextRenderer.render(g, "CONTROLS: [WASD] Move | [E] Enter/Exit Door | [ESC] Exit Room | [1-3, H] Actions", 35, 148);
         }
 
-        private void renderCharacterBadge(
-                Graphics2D g,
-                int x,
-                int y,
-                Color color,
-                String label,
-                String tag
-        ) {
-
+        private void renderCharacterBadge(Graphics2D g, int x, int y, Color color, String label, String tag) {
             g.setColor(new Color(15, 20, 25, 220));
             g.fillOval(x - 2, y - 2, 34, 34);
-
             g.setColor(color);
             g.fillOval(x, y, 30, 30);
-
             g.setColor(Color.BLACK);
             g.drawRect(x, y, 30, 30);
-
             g.setFont(new Font("Monospaced", Font.BOLD, 10));
             g.setColor(Color.BLACK);
+            TextRenderer.render(g, tag, x + 5, y + 19);
+        }
 
-            TextRenderer.render(
-                    g,
-                    tag,
-                    x + 5,
-                    y + 19
-            );
-
-            g.setColor(Color.WHITE);
-            g.setFont(new Font("SansSerif", Font.BOLD, 10));
-
-            TextRenderer.render(
-                    g,
-                    label,
-                    x - 10,
-                    y + 46
-            );
+        private void drawRoadCar(Graphics2D g, int x, int y, Color carColor) {
+            g.setColor(carColor);
+            g.fillRect(x, y, 65, 24);
+            g.setColor(Color.BLACK);
+            g.drawRect(x, y, 65, 24);
+            g.setColor(new Color(200, 220, 240));
+            g.fillRect(x + 15, y + 3, 35, 8);
+            g.setColor(Color.DARK_GRAY);
+            g.fillOval(x + 10, y + 20, 10, 10);
+            g.fillOval(x + 45, y + 20, 10, 10);
         }
 
         private void drawSupplyTruck(Graphics2D g, int x, int y) {
-
             g.setColor(new Color(190, 200, 210));
             g.fillRect(x, y, 110, 40);
-
             g.setColor(Color.BLACK);
             g.drawRect(x, y, 110, 40);
-
-            TextRenderer.render(
-                    g,
-                    "Supply Truck",
-                    x + 12,
-                    y + 25
-            );
-
+            TextRenderer.render(g, "Supply Truck", x + 12, y + 25);
             g.setColor(new Color(41, 128, 185));
             g.fillRect(x + 110, y + 10, 30, 30);
-
             g.setColor(Color.DARK_GRAY);
             g.fillOval(x + 20, y + 35, 14, 14);
             g.fillOval(x + 95, y + 35, 14, 14);
+        }
+
+        private void drawGarbageTruck(Graphics2D g, int x, int y) {
+            g.setColor(new Color(40, 140, 90));
+            g.fillRect(x, y, 110, 40);
+            g.setColor(Color.BLACK);
+            g.drawRect(x, y, 110, 40);
+            g.setColor(Color.WHITE);
+            TextRenderer.render(g, "Garbage Truck", x + 8, y + 25);
+            g.setColor(new Color(50, 50, 50));
+            g.fillRect(x + 110, y + 10, 30, 30);
+            g.setColor(Color.DARK_GRAY);
+            g.fillOval(x + 20, y + 35, 14, 14);
+            g.fillOval(x + 95, y + 35, 14, 14);
+        }
+
+        private void drawStackedTrash(Graphics2D g, int x, int y, int count) {
+            g.setColor(new Color(100, 100, 100));
+            for (int i = 0; i < Math.min(count, 8); i++) {
+                int offsetX = (i % 3) * 12;
+                int offsetY = (i / 3) * 10;
+                g.fillOval(x + offsetX, y - offsetY, 14, 12);
+            }
         }
     }
 }
