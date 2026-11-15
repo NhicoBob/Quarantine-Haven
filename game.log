@@ -1,0 +1,723 @@
+Nov 14, 2026 11:31:07 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:07 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:08 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:08 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:09 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:09 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:09 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:09 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:11 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:11 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:14 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:14 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:17 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:17 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:18 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:18 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:20 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:21 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:23 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:24 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:25 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:25 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:27 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:27 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:29 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:30 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:32 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:33 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:35 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:36 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:36 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:37 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:38 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:38 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:38 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:39 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:39 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:39 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:43 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:31:44 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:44 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:45 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:46 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:46 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:47 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:47 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:47 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:47 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:48 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:48 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:51 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:52 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:53 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:54 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:54 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:54 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:54 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:56 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:56 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:57 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:57 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:58 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:58 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:58 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:31:59 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:00 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:01 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:01 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:01 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:02 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:02 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:02 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:03 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:06 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:08 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:08 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:09 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:10 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:10 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:10 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:12 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:32:14 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:32:14 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:32:14 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:32:14 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:32:15 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:32:15 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:32:15 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:32:16 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:32:16 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:16 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:18 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:18 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:18 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:21 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:21 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:22 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:24 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:24 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:24 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:25 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:25 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:26 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:27 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:27 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:27 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:28 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:28 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:28 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:31 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:31 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:31 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:32 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:32 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:32 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: null
+java.lang.NullPointerException
+
+Nov 14, 2026 11:32:34 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:32:34 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:32:34 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:32:35 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:32:36 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 11:32:36 AM de.gurkenlabs.litiengine.UpdateLoop update
+SEVERE: Cannot read field "assignedFloor" because "d.targetPatient" is null
+java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.targetPatient" is null
+	at com.example.game.Program$ShelterScreen.updateGameLoop(Program.java:521)
+	at de.gurkenlabs.litiengine.UpdateLoop.update(UpdateLoop.java:154)
+	at de.gurkenlabs.litiengine.UpdateLoop.process(UpdateLoop.java:138)
+	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
+	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
+
+Nov 14, 2026 2:25:06 PM de.gurkenlabs.litiengine.DefaultUncaughtExceptionHandler uncaughtException
+SEVERE: Game crashed! :(
+java.lang.IllegalStateException: Menu artwork is missing from game resources.
+	at com.example.game.MyGameScreen.loadBackgroundScene(MyGameScreen.java:157)
+	at com.example.game.MyGameScreen.<init>(MyGameScreen.java:36)
+	at com.example.game.Program.main(Program.java:30)
+
+Nov 14, 2026 2:26:17 PM de.gurkenlabs.litiengine.DefaultUncaughtExceptionHandler uncaughtException
+SEVERE: Game crashed! :(
+java.lang.IllegalStateException: Menu artwork is missing from game resources.
+	at com.example.game.MyGameScreen.loadBackgroundScene(MyGameScreen.java:157)
+	at com.example.game.MyGameScreen.<init>(MyGameScreen.java:36)
+	at com.example.game.Program.main(Program.java:30)
+
