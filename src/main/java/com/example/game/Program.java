@@ -29,6 +29,7 @@ public class Program {
     private static final int WORLD_WIDTH = 1200;
     private static final int WORLD_HEIGHT = 720;
     private static final int ROAD_CAR_HEIGHT = 44;
+    private static final double ROAD_CAR_BOUNCE_HZ = 3.7;               // bounces per second (all cars)
     private static final int ROAD_CAR_SPAWN_GAP = 100;
     private static final int ROAD_LANE_UPPER_Y = 592;
     private static final int ROAD_LANE_LOWER_Y = 654;
@@ -69,7 +70,8 @@ public class Program {
         private static final int PLAYER_COLLISION_WIDTH = 20;
         private static final int PLAYER_COLLISION_HEIGHT = 14;
         private static final int OVERSEER_DRAW_HEIGHT = 56;
-        private static final int MOVE_SPEED = 3;
+        private static final float MOVE_SPEED = 2.5f; // pixels per step; fractions are carried over between steps
+        private float moveRemainderX = 0f, moveRemainderY = 0f;
 
         // BUILDING & FLOOR MANAGEMENT
         private String insideBuilding = null;
@@ -88,6 +90,10 @@ public class Program {
         private long overseerLastMoveNanos = 0L;
         private long overseerWalkStartNanos = 0L;
         private BufferedImage doctorSheet;
+        // Doctor animation frames (64x64 each): side view faces right, left is mirrored at load time
+        private static final long DOCTOR_FRAME_NANOS = 150_000_000L;
+        private static final long DOCTOR_WALK_HOLD_NANOS = 120_000_000L;
+        private BufferedImage[] doctorWalkDown, doctorWalkUp, doctorWalkLeft, doctorWalkRight, doctorIdleDown;
         private BufferedImage guardianSheet;
         // Guard animation frames (64x64 each): side view faces right, left is mirrored at load time
         private static final long GUARD_FRAME_NANOS = 150_000_000L;
@@ -95,6 +101,10 @@ public class Program {
         private BufferedImage[] guardWalkDown, guardWalkUp, guardWalkLeft, guardWalkRight, guardIdleDown;
         private BufferedImage femalePatientSheet;
         private BufferedImage malePatientSheet;
+        // Male patient animation frames (64x64 each): side view faces right, left is mirrored at load time
+        private static final long PATIENT_FRAME_NANOS = 170_000_000L;
+        private static final long PATIENT_WALK_HOLD_NANOS = 120_000_000L;
+        private BufferedImage[] malePatientWalkDown, malePatientWalkUp, malePatientWalkLeft, malePatientWalkRight, malePatientIdleDown;
         private BufferedImage supplyTruckSprite;
         private BufferedImage garbageTruckSprite;
         private BufferedImage trashSprite;
@@ -107,6 +117,7 @@ public class Program {
         private float hireVehiclePosX = -150;
         private boolean hireVehicleActive = false;
         private String hiredRoleName = "";
+        private boolean hireDelivered = false; // the new hire spawns exactly once per vehicle
         private boolean interactionKeyDown;
         private boolean displayModeKeyDown;
 
@@ -116,6 +127,7 @@ public class Program {
             int laneY;
             boolean movingRight;
             BufferedImage sprite;
+            long animOffsetNanos;        // random offset so cars don't bounce in sync
         }
         private final List<RoadTrafficCar> roadTraffic = new ArrayList<>();
         private final Random roadTrafficRandom = new Random();
@@ -151,6 +163,9 @@ public class Program {
         private static class DoctorData extends NavActor {
             float targetX, targetY;
             int state = 0;
+            int facing = FACE_DOWN;
+            long lastMoveNanos = 0L;
+            long walkStartNanos = 0L;
             PatientData targetPatient = null;
             long roamTimer = System.currentTimeMillis();
             Random rand = new Random();
@@ -171,6 +186,9 @@ public class Program {
             float targetX, targetY;
             boolean destInside;
             int destFloor;
+            int facing = FACE_DOWN;
+            long lastMoveNanos = 0L;
+            long walkStartNanos = 0L;
             float roomX, roomY;
             boolean orderedToRoom = false;
             boolean isFemale;
@@ -235,7 +253,8 @@ public class Program {
                 new Rectangle(383, 265, 52, 103),
                 new Rectangle(584, 265, 53, 103)
         };
-        private final String[] buildingNames = {"PATIENT WARD 1", "PATIENT WARD 2", "PATIENT WARD 3"};
+        private static final String STORAGE_ROOM_NAME = "STORAGE ROOM";
+        private final String[] buildingNames = {"PATIENT WARD 1", "PATIENT WARD 2", STORAGE_ROOM_NAME}; // 3rd building = storage room
         private final Rectangle[] lowerBuildingWalls = {
                 new Rectangle(132, 382, 58, 116),
                 new Rectangle(234, 382, 56, 116)
@@ -261,13 +280,66 @@ public class Program {
         private final float door1Y = 315;
         private final float door2X = 394;
         private final float door2Y = 315;
-        private final float door3X = 598;
-        private final float door3Y = 315;
+
+        // ---------- STORAGE ROOM (3rd building) ----------
+        // Rectangles below are in the ORIGINAL 1411x736 artwork's pixel coordinates; storageRect() maps them onto the
+        // 1200x720 world (the art is scaled to full width and sits below a 94px strip that the HUD covers).
+        private static final double STORAGE_IMG_SCALE = 1200.0 / 1411.0;
+        private static final int STORAGE_IMG_TOP = 94;
+        private static final int STORAGE_CAPACITY = 500;                 // max stored per item
+        private static final String[] STORAGE_ITEM_NAMES = {"FOOD", "WATER", "MEDICINE", "MATERIALS"};
+        private static final String[] STORAGE_BAY_CODES = {"E01", "E18", "E15", "E16"}; // labels printed on the racks
+        private static final Color[] STORAGE_ITEM_COLORS = {
+                new Color(109, 198, 146), new Color(105, 186, 225), new Color(226, 138, 128), new Color(215, 184, 126)};
+        private BufferedImage storageBgImage;
+        private final int[] storedStock = new int[4];                    // what is in the storage room
+        private final boolean[] autoRestock = new boolean[4];            // issue stock to the supply line automatically
+        private final int[] restockBelow = {120, 120, 60, 40};           // ...whenever on-hand falls below this
+        private boolean storagePanelOpen = false;
+        private boolean storagePanelManage = false;                      // true = inventory terminal, false = rack
+        private int[] storagePanelItems = {0, 1, 2, 3};
+        private int storagePanelRow = 0;
+        private long storagePanelLastKeyMillis = 0L;
+        private String storageLastAction = "";
+
+        private Rectangle storageRect(int x, int y, int w, int h) {
+            return new Rectangle((int) Math.round(x * STORAGE_IMG_SCALE), STORAGE_IMG_TOP + (int) Math.round(y * STORAGE_IMG_SCALE),
+                    (int) Math.round(w * STORAGE_IMG_SCALE), (int) Math.round(h * STORAGE_IMG_SCALE));
+        }
+
+        private final Rectangle[] storageSolids = {
+                new Rectangle(0, 0, 1200, STORAGE_IMG_TOP),                   // HUD strip
+                storageRect(0, 0, 170, 736), storageRect(1285, 0, 126, 736),  // left / right walls (pipes, pillars, side racks)
+                storageRect(170, 0, 1115, 85), storageRect(538, 75, 56, 62), storageRect(898, 80, 120, 20), // top shelves & pallets
+                storageRect(250, 170, 150, 168),                              // pallet cluster
+                storageRect(528, 150, 62, 160),                               // pallet stack
+                storageRect(423, 272, 116, 90),                               // forklift 1
+                storageRect(588, 0, 112, 335), storageRect(793, 0, 106, 335), // tall racks (E01/E18, E15/E16)
+                storageRect(898, 160, 62, 175),                               // crates beside rack
+                storageRect(1075, 178, 156, 162),                             // crates + small forklift (right)
+                storageRect(248, 440, 182, 164),                              // crate cluster (lower left)
+                storageRect(440, 515, 116, 86),                               // forklift 2
+                storageRect(562, 436, 142, 166),                              // gas cylinder, pallets, shelf
+                storageRect(797, 440, 206, 166),                              // shelving (lower middle)
+                storageRect(1085, 440, 166, 166),                             // crates (lower right)
+                storageRect(222, 668, 203, 70), storageRect(424, 648, 98, 90), // bottom-left pallets & shelf
+                storageRect(612, 684, 94, 52),                                // control console
+                storageRect(820, 668, 20, 62),                                // post
+                storageRect(873, 656, 76, 80),                                // inventory terminals
+                storageRect(1030, 662, 48, 76), storageRect(1083, 658, 60, 80), storageRect(1148, 646, 98, 92) // bottom-right
+        };
+        private final Rectangle[] storageRackZones = {storageRect(578, 332, 130, 70), storageRect(783, 332, 130, 70)};
+        private final int[] storageRackCenterX = {(int) Math.round(643 * STORAGE_IMG_SCALE), (int) Math.round(846 * STORAGE_IMG_SCALE)};
+        private final Rectangle storageTerminalZone = storageRect(850, 610, 125, 50);
+        private final Rectangle storageExitZone = storageRect(700, 650, 95, 90);
+        private final int storageSpawnX = (int) Math.round(745 * STORAGE_IMG_SCALE) - PLAYER_WIDTH / 2;
+        private final int storageSpawnY = STORAGE_IMG_TOP + (int) Math.round(635 * STORAGE_IMG_SCALE) - PLAYER_HEIGHT;
 
         public ShelterScreen() {
             super("SHELTER_SCREEN");
             mapBgImage = loadImage("/map_bg.png");
             interiorBgImage = loadImage("/interior_map.png");
+            storageBgImage = loadImage("/storage_room.png");
             overseerSheet = trimTransparent(loadImage("/overseer_sprite.png"));
             overseerWalkDown = loadFrames("/overseer_walk_down.png", false);
             overseerWalkUp = loadFrames("/overseer_walk_up.png", false);
@@ -275,6 +347,11 @@ public class Program {
             overseerWalkLeft = loadFrames("/overseer_walk_side.png", true);
             overseerIdleDown = loadFrames("/overseer_idle_down.png", false);
             doctorSheet = trimTransparent(loadImage("/doctor_sprite.png"));
+            doctorWalkDown = loadFrames("/doctor_walk_down.png", false);
+            doctorWalkUp = loadFrames("/doctor_walk_up.png", false);
+            doctorWalkRight = loadFrames("/doctor_walk_side.png", false);
+            doctorWalkLeft = loadFrames("/doctor_walk_side.png", true);
+            doctorIdleDown = loadFrames("/doctor_idle_down.png", false);
             guardianSheet = trimTransparent(loadImage("/guardian_sprite.png"));
             guardWalkDown = loadFrames("/guard_walk_down.png", false);
             guardWalkUp = loadFrames("/guard_walk_up.png", false);
@@ -283,6 +360,11 @@ public class Program {
             guardIdleDown = loadFrames("/guard_idle_down.png", false);
             femalePatientSheet = trimTransparent(loadImage("/female_patient.png"));
             malePatientSheet = trimTransparent(loadImage("/male_patient.png"));
+            malePatientWalkDown = loadFrames("/male_patient_walk_down.png", false);
+            malePatientWalkUp = loadFrames("/male_patient_walk_up.png", false);
+            malePatientWalkRight = loadFrames("/male_patient_walk_side.png", false);
+            malePatientWalkLeft = loadFrames("/male_patient_walk_side.png", true);
+            malePatientIdleDown = loadFrames("/male_patient_idle_down.png", false);
             supplyTruckSprite = trimTransparent(loadImage("/supply_arrival_truck.png"));
             garbageTruckSprite = trimTransparent(loadImage("/waste_arrival_truck.png"));
             trashSprite = trimTransparent(loadImage("/trash_sprite.png"));
@@ -310,10 +392,16 @@ public class Program {
             guards.add(new GuardData(208, 440)); // was inside the lower-building wall
             guards.add(new GuardData(600, 450));
 
-            Input.keyboard().onKeyPressed(KeyEvent.VK_W, e -> moveOverseer(0, -MOVE_SPEED));
-            Input.keyboard().onKeyPressed(KeyEvent.VK_S, e -> moveOverseer(0, MOVE_SPEED));
-            Input.keyboard().onKeyPressed(KeyEvent.VK_A, e -> moveOverseer(-MOVE_SPEED, 0));
-            Input.keyboard().onKeyPressed(KeyEvent.VK_D, e -> moveOverseer(MOVE_SPEED, 0));
+            // While a storage panel is open, W/A/S/D/arrows/R drive the panel instead of walking
+            Input.keyboard().onKeyPressed(KeyEvent.VK_W, e -> { if (storagePanelOpen) storagePanelKey(KeyEvent.VK_W, e.isShiftDown()); else moveOverseer(0, -1); });
+            Input.keyboard().onKeyPressed(KeyEvent.VK_S, e -> { if (storagePanelOpen) storagePanelKey(KeyEvent.VK_S, e.isShiftDown()); else moveOverseer(0, 1); });
+            Input.keyboard().onKeyPressed(KeyEvent.VK_A, e -> { if (storagePanelOpen) storagePanelKey(KeyEvent.VK_A, e.isShiftDown()); else moveOverseer(-1, 0); });
+            Input.keyboard().onKeyPressed(KeyEvent.VK_D, e -> { if (storagePanelOpen) storagePanelKey(KeyEvent.VK_D, e.isShiftDown()); else moveOverseer(1, 0); });
+            Input.keyboard().onKeyPressed(KeyEvent.VK_UP, e -> { if (storagePanelOpen) storagePanelKey(KeyEvent.VK_UP, e.isShiftDown()); });
+            Input.keyboard().onKeyPressed(KeyEvent.VK_DOWN, e -> { if (storagePanelOpen) storagePanelKey(KeyEvent.VK_DOWN, e.isShiftDown()); });
+            Input.keyboard().onKeyPressed(KeyEvent.VK_LEFT, e -> { if (storagePanelOpen) storagePanelKey(KeyEvent.VK_LEFT, e.isShiftDown()); });
+            Input.keyboard().onKeyPressed(KeyEvent.VK_RIGHT, e -> { if (storagePanelOpen) storagePanelKey(KeyEvent.VK_RIGHT, e.isShiftDown()); });
+            Input.keyboard().onKeyPressed(KeyEvent.VK_R, e -> { if (storagePanelOpen) storagePanelKey(KeyEvent.VK_R, e.isShiftDown()); });
             Input.keyboard().onKeyPressed(KeyEvent.VK_E, e -> {
                 if (!interactionKeyDown) {
                     interactionKeyDown = true;
@@ -321,7 +409,10 @@ public class Program {
                 }
             });
             Input.keyboard().onKeyReleased(KeyEvent.VK_E, e -> interactionKeyDown = false);
-            Input.keyboard().onKeyPressed(KeyEvent.VK_ESCAPE, e -> exitBuilding());
+            Input.keyboard().onKeyPressed(KeyEvent.VK_ESCAPE, e -> {
+                if (storagePanelOpen) storagePanelOpen = false;
+                else exitBuilding();
+            });
             Input.keyboard().onKeyPressed(KeyEvent.VK_1, e -> assignTaskToNearestStaff(1));
             Input.keyboard().onKeyPressed(KeyEvent.VK_2, e -> assignTaskToNearestStaff(2));
             Input.keyboard().onKeyPressed(KeyEvent.VK_3, e -> assignTaskToNearestStaff(3));
@@ -399,6 +490,9 @@ public class Program {
                     player.y + player.height > WORLD_HEIGHT) {
                 return false;
             }
+            if (isStorageRoom()) {
+                return !intersectsAny(player, storageSolids);
+            }
             if (insideBuilding != null) {
                 if (player.intersects(indoorLeftRooms) || player.intersects(indoorRightRooms) ||
                         player.intersects(indoorTopWall) || player.intersects(indoorBottomWallLeft) ||
@@ -437,7 +531,15 @@ public class Program {
             return -1;
         }
 
-        private void moveOverseer(int dx, int dy) {
+        private void moveOverseer(int dirX, int dirY) {
+            if (storagePanelOpen) return;
+            // Accumulate fractional speed (e.g. 2.5 px) and move by the whole pixels that have built up
+            moveRemainderX += dirX * MOVE_SPEED;
+            moveRemainderY += dirY * MOVE_SPEED;
+            int dx = (int) moveRemainderX;
+            int dy = (int) moveRemainderY;
+            moveRemainderX -= dx;
+            moveRemainderY -= dy;
             int nextX = overseerX + dx;
             int nextY = overseerY + dy;
             int startX = overseerX, startY = overseerY;
@@ -445,10 +547,10 @@ public class Program {
             if (canMoveTo(overseerX, nextY)) overseerY = nextY;
 
             // Turn to face the pressed direction (even if a wall blocks the step)
-            if (dx < 0) overseerFacing = FACE_LEFT;
-            else if (dx > 0) overseerFacing = FACE_RIGHT;
-            else if (dy < 0) overseerFacing = FACE_UP;
-            else if (dy > 0) overseerFacing = FACE_DOWN;
+            if (dirX < 0) overseerFacing = FACE_LEFT;
+            else if (dirX > 0) overseerFacing = FACE_RIGHT;
+            else if (dirY < 0) overseerFacing = FACE_UP;
+            else if (dirY > 0) overseerFacing = FACE_DOWN;
 
             if (overseerX != startX || overseerY != startY) {
                 long now = System.nanoTime();
@@ -482,6 +584,14 @@ public class Program {
 
         private void interactWithLocation() {
             Rectangle playerBounds = actorBoundsAt(overseerX, overseerY);
+            if (storagePanelOpen) {
+                storagePanelOpen = false;
+                return;
+            }
+            if (isStorageRoom()) {
+                interactInStorageRoom(playerBounds);
+                return;
+            }
             if (insideBuilding != null) {
                 if (playerBounds.intersects(indoorStairs)) {
                     currentFloor++;
@@ -507,6 +617,13 @@ public class Program {
         private void enterBuilding(String buildingName) {
             insideBuilding = buildingName;
             currentFloor = 1;
+            storagePanelOpen = false;
+            if (STORAGE_ROOM_NAME.equals(buildingName)) {
+                overseerX = storageSpawnX;
+                overseerY = storageSpawnY;
+                currentEvent = "Entered the storage room. Use the racks to store/take stock and the terminal to manage it.";
+                return;
+            }
             overseerX = 584;
             overseerY = 620;
             currentEvent = "Entered " + buildingName + " [Floor 1]. Walk to cyan stairs to climb floors!";
@@ -515,6 +632,7 @@ public class Program {
         private void exitBuilding() {
             if (insideBuilding != null) {
                 insideBuilding = null;
+                storagePanelOpen = false;
                 overseerX = 580;
                 overseerY = 420;
                 currentEvent = "Returned to compound grounds.";
@@ -603,9 +721,14 @@ public class Program {
         }
 
         private void hireStaffMember(String role, int cost) {
+            if (hireVehicleActive) {
+                currentEvent = "A recruitment vehicle is already on its way!";
+                return;
+            }
             if (currencyPoints >= cost) {
                 currencyPoints -= cost;
                 hiredRoleName = role;
+                hireDelivered = false;
                 hireVehicleActive = true;
                 hireVehiclePosX = -150;
                 currentEvent = "Hiring initiated! Recruitment vehicle arriving...";
@@ -716,6 +839,7 @@ public class Program {
             car.laneY = laneY;
             car.movingRight = movingRight;
             car.sprite = sprite;
+            car.animOffsetNanos = (long) roadTrafficRandom.nextInt(1000) * 1_000_000L;
             roadTraffic.add(car);
             return true;
         }
@@ -723,14 +847,14 @@ public class Program {
         private void updateGameLoop() {
             if (hireVehicleActive) {
                 hireVehiclePosX += 8;
-                if (hireVehiclePosX >= 550) {
+                if (hireVehiclePosX >= 550 && !hireDelivered) {
+                    hireDelivered = true;
                     if (hiredRoleName.equals("Doctor")) {
                         doctors.add(new DoctorData(580, 480, true, 1));
                     } else {
                         guards.add(new GuardData(580, 480));
                     }
                     currentEvent = "New " + hiredRoleName + " arrived and entered facility through door!";
-                    hiredRoleName = "";
                 }
                 if (hireVehiclePosX > 1300) hireVehicleActive = false;
             }
@@ -772,6 +896,7 @@ public class Program {
             long currentTime = System.currentTimeMillis();
             if (currentTime - lastTickTime >= 1000) {
                 lastTickTime = currentTime;
+                runStorageAutoRestock();
                 if (secondsRemaining > 0) {
                     secondsRemaining--;
                 } else {
@@ -999,7 +1124,7 @@ public class Program {
         }
 
         private float nearestDoorX(float x) {
-            float[] doors = {door1X, door2X, door3X};
+            float[] doors = {door1X, door2X}; // the 3rd building is the storage room: NPCs never enter it
             float best = doors[0];
             for (float d : doors) {
                 if (Math.abs(x - d) < Math.abs(x - best)) best = d;
@@ -1008,7 +1133,7 @@ public class Program {
         }
 
         private float randomDoorX() {
-            float[] doors = {door1X, door2X, door3X};
+            float[] doors = {door1X, door2X};
             return doors[navRandom.nextInt(doors.length)];
         }
 
@@ -1138,6 +1263,25 @@ public class Program {
 
         // ---------- PATIENTS ----------
         private void updatePatientMovement(PatientData p) {
+            float startX = p.posX, startY = p.currentY;
+            boolean startInside = p.isInside;
+            int startFloor = p.floor;
+            updatePatientMovementLogic(p);
+
+            // Facing / animation state (ignore door and stairs hops, which move the patient instantly)
+            if (p.isInside != startInside || p.floor != startFloor) return;
+            float movedX = p.posX - startX, movedY = p.currentY - startY;
+            if ((movedX != 0f || movedY != 0f) && Math.abs(movedX) < 12f && Math.abs(movedY) < 12f) {
+                float ax = Math.abs(movedX), ay = Math.abs(movedY);
+                if (ax > ay * 1.25f) p.facing = movedX < 0 ? FACE_LEFT : FACE_RIGHT;
+                else if (ay > ax * 1.25f) p.facing = movedY < 0 ? FACE_UP : FACE_DOWN;
+                long now = System.nanoTime();
+                if (now - p.lastMoveNanos > PATIENT_WALK_HOLD_NANOS) p.walkStartNanos = now;
+                p.lastMoveNanos = now;
+            }
+        }
+
+        private void updatePatientMovementLogic(PatientData p) {
             long nowMs = System.currentTimeMillis();
             if (p.orderedToRoom) {
                 // Rooms are solid blocks, so "arrived" means reaching the closest walkable spot beside the room
@@ -1195,6 +1339,25 @@ public class Program {
         }
 
         private void updateDoctor(DoctorData d) {
+            float startX = d.posX, startY = d.currentY;
+            boolean startInside = d.isInside;
+            int startFloor = d.floor;
+            updateDoctorLogic(d);
+
+            // Facing / animation state (ignore door and stairs hops, which move the doctor instantly)
+            if (d.isInside != startInside || d.floor != startFloor) return;
+            float movedX = d.posX - startX, movedY = d.currentY - startY;
+            if ((movedX != 0f || movedY != 0f) && Math.abs(movedX) < 12f && Math.abs(movedY) < 12f) {
+                float ax = Math.abs(movedX), ay = Math.abs(movedY);
+                if (ax > ay * 1.25f) d.facing = movedX < 0 ? FACE_LEFT : FACE_RIGHT;
+                else if (ay > ax * 1.25f) d.facing = movedY < 0 ? FACE_UP : FACE_DOWN;
+                long now = System.nanoTime();
+                if (now - d.lastMoveNanos > DOCTOR_WALK_HOLD_NANOS) d.walkStartNanos = now;
+                d.lastMoveNanos = now;
+            }
+        }
+
+        private void updateDoctorLogic(DoctorData d) {
             long nowMs = System.currentTimeMillis();
 
             // Patient died / was removed while the doctor was on the way
@@ -1241,6 +1404,282 @@ public class Program {
                     d.targetY = spot[1];
                 }
                 travelTo(d, d.isInside, d.floor, d.targetX, d.targetY, 0.6f);
+            }
+        }
+
+        // ---------- STORAGE ROOM: logic ----------
+        private boolean isStorageRoom() {
+            return STORAGE_ROOM_NAME.equals(insideBuilding);
+        }
+
+        private int getOnHand(int item) {
+            switch (item) {
+                case 0: return food;
+                case 1: return water;
+                case 2: return medicine;
+                default: return materials;
+            }
+        }
+
+        private void setOnHand(int item, int value) {
+            switch (item) {
+                case 0: food = value; break;
+                case 1: water = value; break;
+                case 2: medicine = value; break;
+                default: materials = value; break;
+            }
+        }
+
+        /** Moves stock between the supply line ("on hand") and the storage room. amount > 0 stores, amount < 0 takes. */
+        private void transferStock(int item, int amount) {
+            String name = STORAGE_ITEM_NAMES[item];
+            if (amount > 0) {
+                int moved = Math.min(amount, Math.min(Math.max(0, getOnHand(item)), STORAGE_CAPACITY - storedStock[item]));
+                if (moved <= 0) {
+                    storageLastAction = storedStock[item] >= STORAGE_CAPACITY
+                            ? name + " storage is full (" + STORAGE_CAPACITY + ")." : "No " + name + " on hand to store.";
+                } else {
+                    setOnHand(item, getOnHand(item) - moved);
+                    storedStock[item] += moved;
+                    storageLastAction = "Stored " + moved + " " + name + ".";
+                }
+            } else {
+                int moved = Math.min(-amount, storedStock[item]);
+                if (moved <= 0) {
+                    storageLastAction = "No " + name + " in storage to take.";
+                } else {
+                    storedStock[item] -= moved;
+                    setOnHand(item, getOnHand(item) + moved);
+                    storageLastAction = "Took " + moved + " " + name + " out of storage.";
+                }
+            }
+            currentEvent = storageLastAction;
+        }
+
+        /** Once a second: top up any item with auto-restock on whenever the supply line runs below its level. */
+        private void runStorageAutoRestock() {
+            for (int item = 0; item < storedStock.length; item++) {
+                if (!autoRestock[item] || storedStock[item] <= 0 || getOnHand(item) >= restockBelow[item]) continue;
+                int moved = Math.min(storedStock[item], Math.min(20, restockBelow[item] - getOnHand(item)));
+                if (moved <= 0) continue;
+                storedStock[item] -= moved;
+                setOnHand(item, getOnHand(item) + moved);
+                storageLastAction = "Auto-restock: issued " + moved + " " + STORAGE_ITEM_NAMES[item] + " from storage.";
+            }
+        }
+
+        private void openStoragePanel(boolean manage, int[] items, int startRow) {
+            storagePanelOpen = true;
+            storagePanelManage = manage;
+            storagePanelItems = items;
+            storagePanelRow = Math.max(0, Math.min(items.length - 1, startRow));
+            storageLastAction = "";
+        }
+
+        private int storageRackSide(int rackIndex, Rectangle playerBounds) {
+            return playerBounds.getCenterX() < storageRackCenterX[rackIndex] ? 0 : 1;
+        }
+
+        private void interactInStorageRoom(Rectangle playerBounds) {
+            if (playerBounds.intersects(storageExitZone)) {
+                exitBuilding();
+            } else if (playerBounds.intersects(storageTerminalZone)) {
+                openStoragePanel(true, new int[]{0, 1, 2, 3}, 0);
+            } else if (playerBounds.intersects(storageRackZones[0])) {
+                openStoragePanel(false, new int[]{0, 1}, storageRackSide(0, playerBounds));
+            } else if (playerBounds.intersects(storageRackZones[1])) {
+                openStoragePanel(false, new int[]{2, 3}, storageRackSide(1, playerBounds));
+            } else {
+                currentEvent = "Stand at a rack (E01-E16) to store/take stock, at the terminal to manage it, or at the exit.";
+            }
+        }
+
+        private String storagePromptFor(Rectangle playerBounds) {
+            if (playerBounds.intersects(storageExitZone)) return "E  EXIT STORAGE ROOM";
+            if (playerBounds.intersects(storageTerminalZone)) return "E  INVENTORY TERMINAL";
+            for (int rack = 0; rack < 2; rack++) {
+                if (playerBounds.intersects(storageRackZones[rack])) {
+                    int item = rack * 2 + storageRackSide(rack, playerBounds);
+                    return "E  RACK " + STORAGE_BAY_CODES[item] + "  ·  " + STORAGE_ITEM_NAMES[item];
+                }
+            }
+            return null;
+        }
+
+        /** Keys while a storage panel is open: W/S select, D store, A take, R auto-restock, arrows adjust the level. */
+        private void storagePanelKey(int keyCode, boolean shift) {
+            long now = System.currentTimeMillis();
+            if (now - storagePanelLastKeyMillis < 110) return; // tame OS key-repeat
+            storagePanelLastKeyMillis = now;
+            int rows = storagePanelItems.length;
+            int item = storagePanelItems[storagePanelRow];
+            int amount = shift ? 50 : 10;
+            switch (keyCode) {
+                case KeyEvent.VK_W:
+                case KeyEvent.VK_UP:
+                    storagePanelRow = (storagePanelRow - 1 + rows) % rows;
+                    break;
+                case KeyEvent.VK_S:
+                case KeyEvent.VK_DOWN:
+                    storagePanelRow = (storagePanelRow + 1) % rows;
+                    break;
+                case KeyEvent.VK_D:
+                    transferStock(item, amount);
+                    break;
+                case KeyEvent.VK_A:
+                    transferStock(item, -amount);
+                    break;
+                case KeyEvent.VK_R:
+                    if (storagePanelManage) {
+                        autoRestock[item] = !autoRestock[item];
+                        storageLastAction = "Auto-restock for " + STORAGE_ITEM_NAMES[item] + (autoRestock[item] ? " ON." : " OFF.");
+                    }
+                    break;
+                case KeyEvent.VK_LEFT:
+                    if (storagePanelManage) {
+                        restockBelow[item] = Math.max(0, restockBelow[item] - amount);
+                        storageLastAction = "Restock level for " + STORAGE_ITEM_NAMES[item] + ": " + restockBelow[item] + ".";
+                    }
+                    break;
+                case KeyEvent.VK_RIGHT:
+                    if (storagePanelManage) {
+                        restockBelow[item] = Math.min(STORAGE_CAPACITY, restockBelow[item] + amount);
+                        storageLastAction = "Restock level for " + STORAGE_ITEM_NAMES[item] + ": " + restockBelow[item] + ".";
+                    }
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        // ---------- STORAGE ROOM: drawing ----------
+        private void renderStorageRoom(Graphics2D g) {
+            if (storageBgImage != null) {
+                g.drawImage(storageBgImage, 0, 0, WORLD_WIDTH, WORLD_HEIGHT, null);
+            } else {
+                g.setColor(new Color(60, 66, 74));
+                g.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+            }
+            // stock tags on the four rack bays (the E01/E18/E15/E16 plates printed in the artwork)
+            int[] bayCenterX = {609, 673, 812, 876};
+            for (int item = 0; item < 4; item++) {
+                Rectangle tagArea = storageRect(bayCenterX[item] - 27, 276, 54, 30);
+                renderStockTag(g, tagArea, item);
+            }
+            // terminal label
+            Rectangle terminal = storageRect(873, 656, 76, 80);
+            g.setFont(new Font("SansSerif", Font.BOLD, 10));
+            String label = "INVENTORY TERMINAL";
+            int labelWidth = g.getFontMetrics().stringWidth(label) + 14;
+            int labelX = terminal.x + terminal.width / 2 - labelWidth / 2;
+            int labelY = terminal.y - 38;
+            g.setColor(new Color(10, 20, 28, 215));
+            g.fillRoundRect(labelX, labelY, labelWidth, 17, 8, 8);
+            g.setColor(new Color(244, 153, 75));
+            g.drawRoundRect(labelX, labelY, labelWidth, 17, 8, 8);
+            g.setColor(new Color(247, 245, 236));
+            g.drawString(label, labelX + 7, labelY + 12);
+            renderOverseer(g, overseerX, overseerY);
+        }
+
+        private void renderStockTag(Graphics2D g, Rectangle area, int item) {
+            g.setColor(new Color(10, 20, 28, 215));
+            g.fillRoundRect(area.x, area.y, area.width, area.height, 7, 7);
+            g.setColor(STORAGE_ITEM_COLORS[item]);
+            g.drawRoundRect(area.x, area.y, area.width, area.height, 7, 7);
+            g.setFont(new Font("SansSerif", Font.BOLD, 8));
+            String name = STORAGE_ITEM_NAMES[item];
+            g.drawString(name, area.x + (area.width - g.getFontMetrics().stringWidth(name)) / 2, area.y + 10);
+            g.setFont(new Font("SansSerif", Font.BOLD, 11));
+            g.setColor(new Color(236, 241, 238));
+            String amount = String.valueOf(storedStock[item]);
+            g.drawString(amount, area.x + (area.width - g.getFontMetrics().stringWidth(amount)) / 2, area.y + 23);
+        }
+
+        private void renderStoragePanel(Graphics2D g) {
+            int rows = storagePanelItems.length;
+            int rowH = storagePanelManage ? 84 : 66;
+            int panelW = 640;
+            int panelH = 54 + rows * rowH + (storagePanelManage ? 84 : 66);
+            int panelX = (WORLD_WIDTH - panelW) / 2;
+            int panelY = Math.max(112, (WORLD_HEIGHT + 100 - panelH) / 2);
+            g.setColor(new Color(0, 0, 0, 110));
+            g.fillRect(0, 100, WORLD_WIDTH, WORLD_HEIGHT - 100);
+            g.setPaint(new GradientPaint(panelX, panelY, new Color(15, 27, 40, 250), panelX, panelY + panelH, new Color(20, 36, 49, 248)));
+            g.fillRoundRect(panelX, panelY, panelW, panelH, 16, 16);
+            g.setColor(new Color(104, 148, 159, 190));
+            g.drawRoundRect(panelX, panelY, panelW, panelH, 16, 16);
+            g.setColor(new Color(244, 153, 75));
+            g.fillRoundRect(panelX, panelY, panelW, 4, 8, 8);
+
+            g.setFont(new Font("SansSerif", Font.BOLD, 18));
+            g.setColor(new Color(244, 244, 236));
+            String title = storagePanelManage ? "INVENTORY TERMINAL"
+                    : "STOCK RACK  ·  " + STORAGE_BAY_CODES[storagePanelItems[0]] + " / " + STORAGE_BAY_CODES[storagePanelItems[1]];
+            g.drawString(title, panelX + 22, panelY + 32);
+            g.setFont(new Font("SansSerif", Font.PLAIN, 10));
+            g.setColor(new Color(151, 177, 188));
+            g.drawString("Capacity " + STORAGE_CAPACITY + " per item", panelX + panelW - 140, panelY + 30);
+
+            for (int row = 0; row < rows; row++) {
+                int item = storagePanelItems[row];
+                int ry = panelY + 46 + row * rowH;
+                boolean selected = row == storagePanelRow;
+                g.setColor(selected ? new Color(36, 58, 70, 235) : new Color(24, 40, 52, 200));
+                g.fillRoundRect(panelX + 14, ry, panelW - 28, rowH - 8, 10, 10);
+                g.setColor(selected ? new Color(244, 153, 75) : new Color(70, 96, 110, 160));
+                g.drawRoundRect(panelX + 14, ry, panelW - 28, rowH - 8, 10, 10);
+
+                g.setColor(STORAGE_ITEM_COLORS[item]);
+                g.fillOval(panelX + 30, ry + 14, 10, 10);
+                g.setFont(new Font("SansSerif", Font.BOLD, 15));
+                g.setColor(new Color(236, 241, 238));
+                g.drawString(STORAGE_ITEM_NAMES[item], panelX + 48, ry + 24);
+                g.setFont(new Font("SansSerif", Font.PLAIN, 9));
+                g.setColor(new Color(151, 177, 188));
+                g.drawString("BAY " + STORAGE_BAY_CODES[item], panelX + 48, ry + 37);
+
+                g.setFont(new Font("SansSerif", Font.BOLD, 9));
+                g.setColor(new Color(151, 177, 188));
+                g.drawString("ON HAND", panelX + 200, ry + 17);
+                g.drawString("STORED", panelX + 330, ry + 17);
+                g.setFont(new Font("SansSerif", Font.BOLD, 20));
+                g.setColor(new Color(229, 237, 235));
+                g.drawString(String.valueOf(getOnHand(item)), panelX + 200, ry + 38);
+                g.setColor(new Color(244, 183, 127));
+                g.drawString(storedStock[item] + " / " + STORAGE_CAPACITY, panelX + 330, ry + 38);
+
+                int barX = panelX + 48, barW = panelW - 28 - 48 - 8, barY = ry + 45;
+                g.setColor(new Color(6, 13, 20, 220));
+                g.fillRoundRect(barX, barY, barW, 8, 6, 6);
+                g.setColor(STORAGE_ITEM_COLORS[item]);
+                g.fillRoundRect(barX, barY, Math.max(0, Math.min(barW, barW * storedStock[item] / STORAGE_CAPACITY)), 8, 6, 6);
+
+                if (storagePanelManage) {
+                    boolean on = autoRestock[item];
+                    g.setFont(new Font("SansSerif", Font.BOLD, 10));
+                    g.setColor(on ? new Color(109, 198, 146) : new Color(151, 177, 188));
+                    g.drawString("AUTO-RESTOCK " + (on ? "ON" : "OFF"), panelX + 48, ry + 70);
+                    g.setFont(new Font("SansSerif", Font.PLAIN, 10));
+                    g.setColor(new Color(163, 188, 196));
+                    g.drawString("issue stock from storage when on-hand drops below " + restockBelow[item], panelX + 170, ry + 70);
+                }
+            }
+
+            int fy = panelY + 46 + rows * rowH + 6;
+            g.setFont(new Font("SansSerif", Font.BOLD, 10));
+            g.setColor(new Color(244, 183, 127));
+            g.drawString("W / S  SELECT     D  STORE 10     A  TAKE 10     HOLD SHIFT  x50", panelX + 24, fy + 12);
+            if (storagePanelManage) {
+                g.drawString("R  AUTO-RESTOCK ON/OFF     LEFT / RIGHT  RESTOCK LEVEL  (SHIFT  x50)", panelX + 24, fy + 29);
+            }
+            g.setColor(new Color(151, 177, 188));
+            g.drawString("E / ESC  CLOSE", panelX + panelW - 104, fy + 12);
+            if (!storageLastAction.isEmpty()) {
+                g.setFont(new Font("SansSerif", Font.BOLD, 11));
+                g.setColor(new Color(236, 241, 238));
+                drawFittedString(g, storageLastAction, panelX + 24, fy + (storagePanelManage ? 50 : 34), panelW - 48,
+                        new Font("SansSerif", Font.BOLD, 11));
             }
         }
 
@@ -1301,6 +1740,13 @@ public class Program {
         private void renderFrame(Graphics2D g) {
             int screenWidth = WORLD_WIDTH;
             int screenHeight = WORLD_HEIGHT;
+            if (isStorageRoom()) {
+                renderStorageRoom(g);
+                renderInteractionPrompt(g);
+                renderHud(g);
+                if (storagePanelOpen) renderStoragePanel(g);
+                return;
+            }
             if (insideBuilding != null) {
                 if (interiorBgImage != null) {
                     g.drawImage(interiorBgImage, 0, 0, screenWidth, screenHeight, null);
@@ -1337,12 +1783,12 @@ public class Program {
                         indoorStairs.y - 6);
                 for (PatientData p : patients) {
                     if (p.isInside && p.floor == currentFloor) {
-                        renderPatientWithSpriteAndHealth(g, (int) p.posX, (int) p.currentY, "P#" + p.id, p.need, p.hp, p.isFemale);
+                        renderPatientWithSpriteAndHealth(g, (int) p.posX, (int) p.currentY, "P#" + p.id, p.need, p.hp, p.isFemale, p);
                     }
                 }
                 for (DoctorData doc : doctors) {
                     if (doc.isInside && doc.floor == currentFloor) {
-                        renderDoctor(g, (int) doc.posX, (int) doc.currentY, "Doctor");
+                        renderDoctor(g, (int) doc.posX, (int) doc.currentY, "Doctor", doc);
                     }
                 }
                 renderOverseer(g, overseerX, overseerY);
@@ -1363,12 +1809,12 @@ public class Program {
 
                 for (PatientData p : patients) {
                     if (!p.isInside) {
-                        renderPatientWithSpriteAndHealth(g, (int) p.posX, (int) p.currentY, "P#" + p.id, p.need, p.hp, p.isFemale);
+                        renderPatientWithSpriteAndHealth(g, (int) p.posX, (int) p.currentY, "P#" + p.id, p.need, p.hp, p.isFemale, p);
                     }
                 }
                 for (DoctorData d : doctors) {
                     if (!d.isInside) {
-                        renderDoctor(g, (int) d.posX, (int) d.currentY, "Doctor");
+                        renderDoctor(g, (int) d.posX, (int) d.currentY, "Doctor", d);
                     }
                 }
                 for (GuardData gData : guards) {
@@ -1386,6 +1832,8 @@ public class Program {
             if (insideBuilding == null) {
                 int entrance = nearbyBuildingEntrance(playerBounds);
                 if (entrance >= 0) prompt = "E  ENTER " + buildingNames[entrance];
+            } else if (isStorageRoom()) {
+                if (!storagePanelOpen) prompt = storagePromptFor(playerBounds);
             } else if (playerBounds.intersects(indoorStairs)) {
                 prompt = "E  CHANGE FLOOR";
             } else if (playerBounds.intersects(indoorExit)) {
@@ -1488,10 +1936,10 @@ public class Program {
             }
             g.setColor(new Color(92, 119, 132, 150));
             g.drawLine(panelX + 18, panelY + 108, panelX + panelWidth - 18, panelY + 108);
-            drawResourceCounter(g, panelX + 22, panelY + 130, "FOOD", food, new Color(109, 198, 146));
-            drawResourceCounter(g, panelX + 165, panelY + 130, "WATER", water, new Color(105, 186, 225));
-            drawResourceCounter(g, panelX + 308, panelY + 130, "MEDICINE", medicine, new Color(226, 138, 128));
-            drawResourceCounter(g, panelX + 475, panelY + 130, "MATERIALS", materials, new Color(215, 184, 126));
+            drawResourceCounter(g, panelX + 22, panelY + 130, "FOOD", food, new Color(109, 198, 146), storedStock[0], 143);
+            drawResourceCounter(g, panelX + 165, panelY + 130, "WATER", water, new Color(105, 186, 225), storedStock[1], 143);
+            drawResourceCounter(g, panelX + 308, panelY + 130, "MEDICINE", medicine, new Color(226, 138, 128), storedStock[2], 167);
+            drawResourceCounter(g, panelX + 475, panelY + 130, "MATERIALS", materials, new Color(215, 184, 126), storedStock[3], 250);
             int wasteX = panelX + 731;
             g.setFont(new Font("SansSerif", Font.BOLD, 10));
             g.setColor(new Color(166, 188, 194));
@@ -1545,7 +1993,8 @@ public class Program {
             g.setFont(new Font("SansSerif", Font.BOLD, 17));
             g.setColor(new Color(244, 244, 236));
             g.drawString("QUARANTINE HAVEN", panelX + 16, panelY + 24);
-            String location = insideBuilding.toUpperCase() + "  ·  FLOOR " + currentFloor;
+            String location = isStorageRoom() ? insideBuilding.toUpperCase()
+                    : insideBuilding.toUpperCase() + "  ·  FLOOR " + currentFloor;
             drawFittedString(g, location, panelX + panelWidth - 360, panelY + 24, 340,
                     new Font("SansSerif", Font.BOLD, 11));
             String[] labels = {"DAY", "RESIDENTS", "NEXT TRUCK", "SCORE", "SUPPLY POINTS"};
@@ -1565,16 +2014,34 @@ public class Program {
                 g.setColor(colors[i]);
                 g.drawString(values[i], x, panelY + 62);
             }
-            drawResourceCounter(g, panelX + 536, panelY + 84, "FOOD", food, new Color(109, 198, 146));
-            drawResourceCounter(g, panelX + 667, panelY + 84, "WATER", water, new Color(105, 186, 225));
-            drawResourceCounter(g, panelX + 806, panelY + 84, "MEDICINE", medicine, new Color(226, 138, 128));
-            drawResourceCounter(g, panelX + 978, panelY + 84, "MATERIALS", materials, new Color(215, 184, 126));
+            drawResourceCounter(g, panelX + 536, panelY + 84, "FOOD", food, new Color(109, 198, 146), storedStock[0], 131);
+            drawResourceCounter(g, panelX + 667, panelY + 84, "WATER", water, new Color(105, 186, 225), storedStock[1], 139);
+            drawResourceCounter(g, panelX + 806, panelY + 84, "MEDICINE", medicine, new Color(226, 138, 128), storedStock[2], 172);
+            drawResourceCounter(g, panelX + 978, panelY + 84, "MATERIALS", materials, new Color(215, 184, 126), storedStock[3], 200);
             g.setFont(new Font("SansSerif", Font.BOLD, 9));
             g.setColor(new Color(166, 188, 194));
             g.drawString("WASTE " + waste + "%  ·  " + stackedTrashCount + " PILES", panelX + 536, panelY + 61);
+            if (isStorageRoom()) {
+                g.setColor(new Color(8, 15, 23, 224));
+                g.fillRoundRect(panelX, panelY + panelHeight + 8, 620, 28, 9, 9);
+                g.setColor(new Color(244, 153, 75));
+                g.fillRoundRect(panelX, panelY + panelHeight + 8, 3, 28, 3, 3);
+                g.setFont(new Font("SansSerif", Font.BOLD, 10));
+                g.setColor(new Color(244, 183, 127));
+                g.drawString("LATEST", panelX + 15, panelY + panelHeight + 26);
+                g.setColor(new Color(229, 237, 235));
+                drawFittedString(g, currentEvent, panelX + 65, panelY + panelHeight + 26, 540,
+                        new Font("SansSerif", Font.PLAIN, 10));
+            }
         }
 
         private void drawResourceCounter(Graphics2D g, int x, int baseline, String label, int value, Color color) {
+            drawResourceCounter(g, x, baseline, label, value, color, 0, 0);
+        }
+
+        /** Like above, plus a small "+N stored" note (or just "+N" if the column is tight) when some of the item is in storage. */
+        private void drawResourceCounter(Graphics2D g, int x, int baseline, String label, int value, Color color,
+                                         int stored, int columnWidth) {
             g.setColor(color);
             g.fillOval(x, baseline - 8, 7, 7);
             g.setFont(new Font("SansSerif", Font.BOLD, 9));
@@ -1582,7 +2049,17 @@ public class Program {
             g.drawString(label, x + 13, baseline - 2);
             g.setFont(new Font("SansSerif", Font.BOLD, 12));
             g.setColor(new Color(229, 237, 235));
-            g.drawString(String.valueOf(value), x + 13 + g.getFontMetrics().stringWidth(label) + 7, baseline - 2);
+            int valueX = x + 13 + g.getFontMetrics().stringWidth(label) + 7;
+            g.drawString(String.valueOf(value), valueX, baseline - 2);
+            if (stored > 0) {
+                int valueWidth = g.getFontMetrics().stringWidth(String.valueOf(value));
+                g.setFont(new Font("SansSerif", Font.BOLD, 9));
+                g.setColor(new Color(244, 183, 127));
+                int noteX = valueX + valueWidth + 6;
+                String note = "+" + stored + " stored";
+                if (noteX + g.getFontMetrics().stringWidth(note) > x + columnWidth - 6) note = "+" + stored;
+                g.drawString(note, noteX, baseline - 2);
+            }
         }
 
         private void drawFittedString(Graphics2D g, String text, int x, int baseline, int maxWidth, Font font) {
@@ -1599,8 +2076,27 @@ public class Program {
             g.drawString(fitted + "…", x, baseline);
         }
 
-        private void renderDoctor(Graphics2D g, int x, int y, String label) {
-            if (doctorSheet != null) {
+        private BufferedImage currentDoctorFrame(DoctorData doctor) {
+            long now = System.nanoTime();
+            boolean walking = now - doctor.lastMoveNanos <= DOCTOR_WALK_HOLD_NANOS;
+            BufferedImage[] frames;
+            switch (doctor.facing) {
+                case FACE_UP: frames = doctorWalkUp; break;
+                case FACE_LEFT: frames = doctorWalkLeft; break;
+                case FACE_RIGHT: frames = doctorWalkRight; break;
+                default: frames = walking ? doctorWalkDown : doctorIdleDown; break;
+            }
+            if (frames == null || frames.length == 0) return null;
+            if (walking) return frames[(int) (((now - doctor.walkStartNanos) / DOCTOR_FRAME_NANOS) % frames.length)];
+            if (doctor.facing == FACE_DOWN) return frames[(int) ((now / 400_000_000L) % frames.length)];
+            return frames[0];
+        }
+
+        private void renderDoctor(Graphics2D g, int x, int y, String label, DoctorData doctor) {
+            BufferedImage frame = doctor == null ? null : currentDoctorFrame(doctor);
+            if (frame != null) {
+                drawAnimatedFrame(g, frame, x, y, 56);
+            } else if (doctorSheet != null) {
                 drawCharacterSprite(g, doctorSheet, x, y, 56);
             } else {
                 renderCharacterBadge(g, x, y, Color.GREEN, label, "DOC");
@@ -1608,9 +2104,29 @@ public class Program {
             drawEntityLabel(g, label, x + PLAYER_WIDTH / 2, y + 42, new Color(225, 245, 241));
         }
 
-        private void renderPatientWithSpriteAndHealth(Graphics2D g, int x, int y, String label, String need, float hp, boolean isFemale) {
+        private BufferedImage currentMalePatientFrame(PatientData patient) {
+            long now = System.nanoTime();
+            boolean walking = now - patient.lastMoveNanos <= PATIENT_WALK_HOLD_NANOS;
+            BufferedImage[] frames;
+            switch (patient.facing) {
+                case FACE_UP: frames = malePatientWalkUp; break;
+                case FACE_LEFT: frames = malePatientWalkLeft; break;
+                case FACE_RIGHT: frames = malePatientWalkRight; break;
+                default: frames = walking ? malePatientWalkDown : malePatientIdleDown; break;
+            }
+            if (frames == null || frames.length == 0) return null;
+            if (walking) return frames[(int) (((now - patient.walkStartNanos) / PATIENT_FRAME_NANOS) % frames.length)];
+            if (patient.facing == FACE_DOWN) return frames[(int) ((now / 400_000_000L) % frames.length)];
+            return frames[0];
+        }
+
+        private void renderPatientWithSpriteAndHealth(Graphics2D g, int x, int y, String label, String need, float hp,
+                                                      boolean isFemale, PatientData patient) {
             BufferedImage sheet = isFemale ? femalePatientSheet : malePatientSheet;
-            if (sheet != null) {
+            BufferedImage frame = (!isFemale && patient != null) ? currentMalePatientFrame(patient) : null;
+            if (frame != null) {
+                drawAnimatedFrame(g, frame, x, y, 52);
+            } else if (sheet != null) {
                 drawCharacterSprite(g, sheet, x, y, 52);
             } else {
                 Color badgeColor = need.equals("HEALTHY") ? Color.ORANGE : Color.RED;
@@ -1715,17 +2231,21 @@ public class Program {
         }
 
         private void drawRoadCar(Graphics2D g, RoadTrafficCar car) {
+            long t = System.nanoTime() + car.animOffsetNanos;
+            BufferedImage sprite = car.sprite;
+            // 1px engine bounce, with a random per-car phase so the traffic doesn't bounce in sync
+            int bounce = (int) Math.round(Math.sin(t / 1_000_000_000.0 * ROAD_CAR_BOUNCE_HZ * 2 * Math.PI));
             Graphics2D spriteGraphics = (Graphics2D) g.create();
             if (car.movingRight) {
-                spriteGraphics.translate(Math.round(car.x), car.laneY);
-                spriteGraphics.scale(car.width / (double) car.sprite.getWidth(),
-                        ROAD_CAR_HEIGHT / (double) car.sprite.getHeight());
+                spriteGraphics.translate(Math.round(car.x), car.laneY + bounce);
+                spriteGraphics.scale(car.width / (double) sprite.getWidth(),
+                        ROAD_CAR_HEIGHT / (double) sprite.getHeight());
             } else {
-                spriteGraphics.translate(Math.round(car.x) + car.width, car.laneY);
-                spriteGraphics.scale(-car.width / (double) car.sprite.getWidth(),
-                        ROAD_CAR_HEIGHT / (double) car.sprite.getHeight());
+                spriteGraphics.translate(Math.round(car.x) + car.width, car.laneY + bounce);
+                spriteGraphics.scale(-car.width / (double) sprite.getWidth(),
+                        ROAD_CAR_HEIGHT / (double) sprite.getHeight());
             }
-            spriteGraphics.drawImage(car.sprite, 0, 0, null);
+            spriteGraphics.drawImage(sprite, 0, 0, null);
             spriteGraphics.dispose();
         }
 
