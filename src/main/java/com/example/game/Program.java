@@ -166,6 +166,8 @@ public class Program {
             int facing = FACE_DOWN;
             long lastMoveNanos = 0L;
             long walkStartNanos = 0L;
+            long treatStartMillis = 0L;   // != 0 while the doctor is standing with a patient, treating them
+            long waitStartMillis = 0L;    // when the doctor started waiting in a room for the patient to arrive
             PatientData targetPatient = null;
             long roamTimer = System.currentTimeMillis();
             Random rand = new Random();
@@ -189,7 +191,9 @@ public class Program {
             int facing = FACE_DOWN;
             long lastMoveNanos = 0L;
             long walkStartNanos = 0L;
-            float roomX, roomY;
+            float roomX, roomY;          // where this patient stands in their ward room
+            int roomFloor = 1;
+            int roomIndex = -1;          // -1 = no bed assigned yet (see assignRoom)
             boolean orderedToRoom = false;
             boolean isFemale;
             String need = "HEALTHY";
@@ -205,16 +209,6 @@ public class Program {
                 this.isInside = isInside;
                 this.floor = floor;
                 this.isFemale = (id % 2 == 0);
-                int roomSlot = (id - 1) % 4;
-                if (roomSlot == 0) {
-                    this.roomX = 80; this.roomY = 150 + ((id * 30) % 300);
-                } else if (roomSlot == 1) {
-                    this.roomX = 1110; this.roomY = 150 + ((id * 30) % 300);
-                } else if (roomSlot == 2) {
-                    this.roomX = 420; this.roomY = 100 + ((id * 20) % 120);
-                } else {
-                    this.roomX = 750; this.roomY = 100 + ((id * 20) % 120);
-                }
                 this.targetX = startX;
                 this.targetY = startY;
                 this.destInside = isInside;
@@ -263,19 +257,78 @@ public class Program {
         private final Rectangle bottomWallRight = new Rectangle(886, 470, 234, 100);
         private final Rectangle leftWall = new Rectangle(74, 42, 48, 428);
         private final Rectangle rightFence = new Rectangle(1104, 42, 48, 428);
-        private final Rectangle indoorLeftRooms = new Rectangle(0, 0, 160, 720);
-        private final Rectangle indoorRightRooms = new Rectangle(1040, 0, 160, 720);
-        private final Rectangle[] indoorCenterBlockWalls = {
-                new Rectangle(380, 40, 170, 260), new Rectangle(620, 40, 200, 260)
-        };
-        private final Rectangle[] indoorMedicalDeskWalls = {
-                new Rectangle(470, 320, 80, 40), new Rectangle(620, 320, 110, 40)
-        };
-        private final Rectangle indoorTopWall = new Rectangle(0, 0, 1200, 35);
-        private final Rectangle indoorBottomWallLeft = new Rectangle(0, 670, 550, 50);
-        private final Rectangle indoorBottomWallRight = new Rectangle(630, 670, 570, 50);
-        private final Rectangle indoorStairs = new Rectangle(550, 120, 70, 50);
+        // ---------- WARD INTERIOR (interior_map.png) ----------
+        // The art has 7 small ward rooms down each side wall (each with a doorway on its inner edge), a 6-room medical
+        // block in the middle, an UP staircase on the left and a DOWN staircase on the right. Rooms repeat every 101px.
+        private static final int WARD_BAND_TOP = 8;
+        private static final int WARD_BAND_PERIOD = 101;
+        private static final int WARD_DOOR_START = 54;   // doorway = band top + 54 ... + 84 (30px tall)
+        private static final int WARD_DOOR_END = 84;
+        // room numbers: 0-6 left wall, 7-13 right wall, 14-16 centre block (west column), 17-19 centre block (east column).
+        // Bed order: the top row (0, 7, 14, 17) sits behind the HUD panel, so those rooms are used last.
+        private static final int[] WARD_ROOM_ORDER = {1, 8, 2, 9, 3, 10, 4, 11, 5, 12, 6, 13, 15, 18, 16, 19, 0, 7, 14, 17};
+        private final Rectangle[] indoorSolids = buildIndoorSolids();
+        private final Rectangle indoorStairsUp = new Rectangle(225, 112, 150, 44);
+        private final Rectangle indoorStairsDown = new Rectangle(820, 112, 155, 44);
         private final Rectangle indoorExit = new Rectangle(550, 654, 100, 56);
+
+        private static int wardBandTop(int band) {
+            return WARD_BAND_TOP + WARD_BAND_PERIOD * band;
+        }
+
+        private static Rectangle[] buildIndoorSolids() {
+            List<Rectangle> r = new ArrayList<>();
+            r.add(new Rectangle(0, 0, WORLD_WIDTH, 10));                    // top wall
+            r.add(new Rectangle(0, 708, WORLD_WIDTH, 12));                  // bottom wall
+            r.add(new Rectangle(0, 0, 6, WORLD_HEIGHT));                    // left outer wall
+            r.add(new Rectangle(WORLD_WIDTH - 6, 0, 6, WORLD_HEIGHT));      // right outer wall
+            for (int k = 0; k < 7; k++) {
+                int t = wardBandTop(k);
+                // left ward rooms: divider below the room, inner wall with a doorway
+                r.add(new Rectangle(0, t + 92, 118, 5));
+                r.add(new Rectangle(112, t, 6, WARD_DOOR_START));
+                r.add(new Rectangle(112, t + WARD_DOOR_END, 6, 13));
+                // right ward rooms (mirror image)
+                r.add(new Rectangle(WORLD_WIDTH - 118, t + 92, 118, 5));
+                r.add(new Rectangle(WORLD_WIDTH - 118, t, 6, WARD_DOOR_START));
+                r.add(new Rectangle(WORLD_WIDTH - 118, t + WARD_DOOR_END, 6, 13));
+            }
+            for (int k = 0; k < 3; k++) {                                   // centre medical block: doors face outward
+                int t = wardBandTop(k);
+                r.add(new Rectangle(483, t, 7, WARD_DOOR_START));
+                r.add(new Rectangle(483, t + WARD_DOOR_END, 7, 13));
+                r.add(new Rectangle(707, t, 7, WARD_DOOR_START));
+                r.add(new Rectangle(707, t + WARD_DOOR_END, 7, 13));
+                if (k < 2) r.add(new Rectangle(483, t + 92, 231, 5));
+            }
+            r.add(new Rectangle(483, wardBandTop(2) + 92, 231, 9));         // bottom wall of the block
+            r.add(new Rectangle(597, 8, 5, 295));                           // divider between its two columns
+            r.add(new Rectangle(225, 0, 150, 114));                         // UP staircase
+            r.add(new Rectangle(820, 0, 155, 114));                         // DOWN staircase
+            r.add(new Rectangle(538, 340, 126, 48));                        // medical station counter
+            r.add(new Rectangle(495, 652, 55, 36));                         // exit console
+            r.add(new Rectangle(472, 324, 16, 24));                         // plants beside the medical block
+            r.add(new Rectangle(718, 324, 16, 24));
+            // (the corridor plants beside the ward doorways are decoration only: they must not block a door)
+            return r.toArray(new Rectangle[0]);
+        }
+
+        /** Where a doctor stands while tending the patient in a room: beside them, further into the room. */
+        private static float[] roomDoctorSpot(int room) {
+            float[] spot = roomStandSpot(room);
+            if (room < 7) return new float[]{spot[0] - 28f, spot[1]};
+            if (room < 14) return new float[]{spot[0] + 28f, spot[1]};
+            if (room < 17) return new float[]{spot[0] + 30f, spot[1]};
+            return new float[]{spot[0] - 30f, spot[1]};
+        }
+
+        /** Where a patient stands inside a ward room (top-left of the 26x26 actor box), clear of the bed and the doorway. */
+        private static float[] roomStandSpot(int room) {
+            if (room < 7) return new float[]{60f, wardBandTop(room) + 52f};
+            if (room < 14) return new float[]{WORLD_WIDTH - 60f - 26f, wardBandTop(room - 7) + 52f};
+            if (room < 17) return new float[]{515f, wardBandTop(room - 14) + 52f};
+            return new float[]{655f, wardBandTop(room - 17) + 52f};
+        }
         private final float door1X = 194;
         private final float door1Y = 315;
         private final float door2X = 394;
@@ -386,7 +439,7 @@ public class Program {
             }
 
             doctors.add(new DoctorData(300, 430, false, 1)); // was inside a wall
-            doctors.add(new DoctorData(585, 220, true, 2)); // was inside a room block
+            doctors.add(new DoctorData(400, 450, true, 2)); // lobby (old spot was inside a room block)
 
             // Moved left guard further down into open walkway area (Y=445)
             guards.add(new GuardData(208, 440)); // was inside the lower-building wall
@@ -494,15 +547,7 @@ public class Program {
                 return !intersectsAny(player, storageSolids);
             }
             if (insideBuilding != null) {
-                if (player.intersects(indoorLeftRooms) || player.intersects(indoorRightRooms) ||
-                        player.intersects(indoorTopWall) || player.intersects(indoorBottomWallLeft) ||
-                        player.intersects(indoorBottomWallRight)) {
-                    return false;
-                }
-                if (intersectsAny(player, indoorCenterBlockWalls) || intersectsAny(player, indoorMedicalDeskWalls)) {
-                    return false;
-                }
-                return true;
+                return !intersectsAny(player, indoorSolids);
             }
             if (player.y < 60 || player.y + player.height > 560) return false;
             if (player.intersects(bottomWallLeft) || player.intersects(bottomWallRight) ||
@@ -593,16 +638,28 @@ public class Program {
                 return;
             }
             if (insideBuilding != null) {
-                if (playerBounds.intersects(indoorStairs)) {
-                    currentFloor++;
-                    if (currentFloor > 3) currentFloor = 1;
-                    currentEvent = "Climbed stairs in " + insideBuilding + " -> Now on Floor " + currentFloor + "!";
+                if (playerBounds.intersects(indoorStairsUp)) {
+                    if (currentFloor < 3) {
+                        currentFloor++;
+                        currentEvent = "Went UP to Floor " + currentFloor + " of " + insideBuilding + ".";
+                    } else {
+                        currentEvent = "You are already on the top floor. Use the DOWN stairs (right) to go back down.";
+                    }
+                    return;
+                }
+                if (playerBounds.intersects(indoorStairsDown)) {
+                    if (currentFloor > 1) {
+                        currentFloor--;
+                        currentEvent = "Went DOWN to Floor " + currentFloor + " of " + insideBuilding + ".";
+                    } else {
+                        currentEvent = "You are on the ground floor. Use the UP stairs (left), or the exit door at the bottom.";
+                    }
                     return;
                 }
                 if (playerBounds.intersects(indoorExit)) {
                     exitBuilding();
                 } else {
-                    currentEvent = "Walk to cyan stairs [550, 120] to change floors, or walk down to exit door.";
+                    currentEvent = "UP stairs are on the left, DOWN stairs on the right; the exit door is at the bottom.";
                 }
                 return;
             }
@@ -740,10 +797,7 @@ public class Program {
         private boolean indoorCollides(float x, float y) {
             Rectangle rect = actorBoundsAt(x, y);
             return rect.x < 0 || rect.y < 0 || rect.x + rect.width > WORLD_WIDTH ||
-                    rect.y + rect.height > WORLD_HEIGHT || rect.intersects(indoorLeftRooms) || rect.intersects(indoorRightRooms) ||
-                    intersectsAny(rect, indoorCenterBlockWalls) || intersectsAny(rect, indoorMedicalDeskWalls) ||
-                    rect.intersects(indoorTopWall) || rect.intersects(indoorBottomWallLeft) ||
-                    rect.intersects(indoorBottomWallRight);
+                    rect.y + rect.height > WORLD_HEIGHT || intersectsAny(rect, indoorSolids);
         }
 
         private boolean intersectsAny(Rectangle actor, Rectangle[] obstacles) {
@@ -909,10 +963,13 @@ public class Program {
         private static final int NAV_CELL = 8;
         private static final float NAV_REPLAN_DISTANCE = 16f;
         private static final long NAV_RETRY_NANOS = 500_000_000L;
-        private static final int PORTAL_NONE = 0, PORTAL_DOOR_IN = 1, PORTAL_STAIRS = 2, PORTAL_EXIT = 3;
-        private static final float STAIRS_GOAL_X = 572f, STAIRS_GOAL_Y = 135f;
+        private static final int PORTAL_NONE = 0, PORTAL_DOOR_IN = 1, PORTAL_STAIRS_UP = 2, PORTAL_EXIT = 3, PORTAL_STAIRS_DOWN = 4;
+        // spots just below each staircase (top-left of the actor box) that fall inside the stairs' interaction zone
+        private static final float STAIRS_UP_GOAL_X = 272f, STAIRS_DOWN_GOAL_X = 884f, STAIRS_GOAL_Y = 114f;
         private static final float EXIT_GOAL_X = 584f, EXIT_GOAL_Y = 655f;
         private final Random navRandom = new Random();
+        private static final long TREAT_MILLIS = 2000L;   // how long a doctor tends a patient before they are cured
+        private static final int INDOOR_ROAM_X = 170, INDOOR_ROAM_W = 860, INDOOR_ROAM_Y = 330, INDOOR_ROAM_H = 300; // open lobby
         private NavGrid outdoorNav, indoorNav;
 
         private boolean collidesIn(boolean inside, float x, float y) {
@@ -1152,18 +1209,19 @@ public class Program {
             int portal = PORTAL_NONE;
             if (a.isInside == targetInside) {
                 if (a.isInside && a.floor != targetFloor) {
-                    gx = STAIRS_GOAL_X;
+                    boolean up = targetFloor > a.floor;
+                    gx = up ? STAIRS_UP_GOAL_X : STAIRS_DOWN_GOAL_X;
                     gy = STAIRS_GOAL_Y;
-                    portal = PORTAL_STAIRS;
+                    portal = up ? PORTAL_STAIRS_UP : PORTAL_STAIRS_DOWN;
                 }
             } else if (!a.isInside) {
                 gx = nearestDoorX(a.posX);
                 gy = door1Y;
                 portal = PORTAL_DOOR_IN;
             } else if (a.floor != 1) {
-                gx = STAIRS_GOAL_X;
+                gx = STAIRS_DOWN_GOAL_X;
                 gy = STAIRS_GOAL_Y;
-                portal = PORTAL_STAIRS;
+                portal = PORTAL_STAIRS_DOWN;
             } else {
                 gx = EXIT_GOAL_X;
                 gy = EXIT_GOAL_Y;
@@ -1184,8 +1242,13 @@ public class Program {
                     a.currentY = 620;
                     resetNav(nav);
                     return false;
-                case PORTAL_STAIRS:
-                    a.floor = a.floor % 3 + 1;
+                case PORTAL_STAIRS_UP:
+                    a.floor = Math.min(3, a.floor + 1);
+                    nav.holdUntilMillis = System.currentTimeMillis() + 700;
+                    resetNav(nav);
+                    return false;
+                case PORTAL_STAIRS_DOWN:
+                    a.floor = Math.max(1, a.floor - 1);
                     nav.holdUntilMillis = System.currentTimeMillis() + 700;
                     resetNav(nav);
                     return false;
@@ -1281,50 +1344,85 @@ public class Program {
             }
         }
 
+        private boolean isRoomTaken(int floor, int room, PatientData except) {
+            for (PatientData other : patients) {
+                if (other != except && other.roomIndex == room && other.roomFloor == floor) return true;
+            }
+            return false;
+        }
+
+        /** Gives a patient their own ward room: fills floor 1 first, then 2 and 3 (shares beds only if all are taken). */
+        private void assignRoom(PatientData p) {
+            if (p.roomIndex >= 0) return;
+            for (int floor = 1; floor <= 3; floor++) {
+                for (int room : WARD_ROOM_ORDER) {
+                    if (!isRoomTaken(floor, room, p)) {
+                        setPatientRoom(p, floor, room);
+                        return;
+                    }
+                }
+            }
+            int shared = (p.id - 1) % (3 * WARD_ROOM_ORDER.length);
+            setPatientRoom(p, shared / WARD_ROOM_ORDER.length + 1, WARD_ROOM_ORDER[shared % WARD_ROOM_ORDER.length]);
+        }
+
+        private void setPatientRoom(PatientData p, int floor, int room) {
+            p.roomFloor = floor;
+            p.roomIndex = room;
+            float[] spot = roomStandSpot(room);
+            p.roomX = spot[0];
+            p.roomY = spot[1];
+        }
+
+        private boolean isPatientBeingTended(PatientData patient) {
+            for (DoctorData d : doctors) {
+                if (d.state == 1 && d.targetPatient == patient && d.treatStartMillis != 0L) return true;
+            }
+            return false;
+        }
+
+        private void sendPatientToDestination(PatientData p, boolean inside, int floor, float[] spot) {
+            p.destInside = inside;
+            p.destFloor = floor;
+            p.targetX = spot[0];
+            p.targetY = spot[1];
+        }
+
         private void updatePatientMovementLogic(PatientData p) {
             long nowMs = System.currentTimeMillis();
-            if (p.orderedToRoom) {
-                // Rooms are solid blocks, so "arrived" means reaching the closest walkable spot beside the room
-                int roomFloor = p.isInside ? p.floor : 1;
-                if (travelTo(p, true, roomFloor, p.roomX, p.roomY, 0.5f)) {
+            assignRoom(p);
+            if (isPatientBeingTended(p)) return;            // stands still while a doctor works on them
+
+            // Patients who need care (or were recalled with [5]) go to their own bed and wait there for a doctor
+            if (p.orderedToRoom || !p.need.equals("HEALTHY")) {
+                boolean inRoom = travelTo(p, true, p.roomFloor, p.roomX, p.roomY, 1.8f); // hurry: sick patients lose health
+                sendPatientToDestination(p, true, p.roomFloor, new float[]{p.roomX, p.roomY});
+                if (inRoom && p.orderedToRoom) {
                     p.orderedToRoom = false;
-                    p.destInside = true;
-                    p.destFloor = p.floor;
-                    p.targetX = p.posX;
-                    p.targetY = p.currentY;
-                    p.roamTimer = nowMs + 14000; // stay put in the room for a while
+                    p.roamTimer = nowMs + 14000;            // stay in the room for a while
                 }
                 return;
             }
+
             if (nowMs - p.roamTimer > 6000) {
                 p.roamTimer = nowMs;
                 double r = p.rand.nextDouble();
-                if (p.isInside) {
-                    if (r < 0.15) {                       // head outside
-                        p.destInside = false;
-                        p.destFloor = 1;
-                        float[] spot = randomSpot(p.rand, false, 180, 780, 345, 110);
-                        p.targetX = spot[0];
-                        p.targetY = spot[1];
-                    } else {                              // wander indoors, sometimes to another floor
-                        p.destInside = true;
-                        p.destFloor = r < 0.30 ? 1 + p.rand.nextInt(3) : p.floor;
-                        float[] spot = randomSpot(p.rand, true, 180, 780, 280, 220);
-                        p.targetX = spot[0];
-                        p.targetY = spot[1];
+                if (r < 0.40) {                              // rest in their own room
+                    sendPatientToDestination(p, true, p.roomFloor, new float[]{p.roomX, p.roomY});
+                } else {
+                    double r2 = (r - 0.40) / 0.60;
+                    if (p.isInside) {
+                        if (r2 < 0.15) {                     // head outside
+                            sendPatientToDestination(p, false, 1, randomSpot(p.rand, false, 180, 780, 345, 110));
+                        } else {                             // wander the lobby, sometimes on another floor
+                            int floor = r2 < 0.30 ? 1 + p.rand.nextInt(3) : p.floor;
+                            sendPatientToDestination(p, true, floor, randomSpot(p.rand, true, INDOOR_ROAM_X, INDOOR_ROAM_W, INDOOR_ROAM_Y, INDOOR_ROAM_H));
+                        }
+                    } else if (r2 < 0.5) {                   // go into the ward
+                        sendPatientToDestination(p, true, 1 + p.rand.nextInt(3), randomSpot(p.rand, true, INDOOR_ROAM_X, INDOOR_ROAM_W, INDOOR_ROAM_Y, INDOOR_ROAM_H));
+                    } else {                                 // wander the courtyard
+                        sendPatientToDestination(p, false, 1, randomSpot(p.rand, false, 180, 780, 345, 110));
                     }
-                } else if (r < 0.5) {                     // go into a ward
-                    p.destInside = true;
-                    p.destFloor = 1 + p.rand.nextInt(3);
-                    float[] spot = randomSpot(p.rand, true, 180, 780, 280, 220);
-                    p.targetX = spot[0];
-                    p.targetY = spot[1];
-                } else {                                  // wander the courtyard
-                    p.destInside = false;
-                    p.destFloor = 1;
-                    float[] spot = randomSpot(p.rand, false, 180, 780, 345, 110);
-                    p.targetX = spot[0];
-                    p.targetY = spot[1];
                 }
             }
             travelTo(p, p.destInside, p.destFloor, p.targetX, p.targetY, 0.5f);
@@ -1364,23 +1462,54 @@ public class Program {
             if (d.state == 1 && (d.targetPatient == null || !patients.contains(d.targetPatient))) {
                 d.state = 0;
                 d.targetPatient = null;
+                d.treatStartMillis = 0L;
             }
             if (d.state == 0) {
+                // Pick the patient who can be treated soonest: already in their room first, then the weakest
+                PatientData best = null;
+                float bestScore = Float.MAX_VALUE;
                 for (PatientData p : patients) {
-                    if (!p.need.equals("HEALTHY") && !isTargetedByOtherDoctor(p, d)) {
-                        d.state = 1;
-                        d.targetPatient = p;
-                        break;
+                    if (p.need.equals("HEALTHY") || isTargetedByOtherDoctor(p, d)) continue;
+                    assignRoom(p);
+                    boolean inRoom = p.isInside && p.floor == p.roomFloor
+                            && Math.hypot(p.posX - p.roomX, p.currentY - p.roomY) <= 24f;
+                    float score = (inRoom ? -1000f : 0f) + p.hp;
+                    if (score < bestScore) {
+                        bestScore = score;
+                        best = p;
                     }
+                }
+                if (best != null) {
+                    d.state = 1;
+                    d.targetPatient = best;
                 }
             }
 
             if (d.state == 1 && d.targetPatient != null) {
                 PatientData tp = d.targetPatient;
-                boolean arrived = travelTo(d, tp.isInside, tp.floor, tp.posX, tp.currentY, 1.5f);
-                boolean sameSpace = d.isInside == tp.isInside && (!d.isInside || d.floor == tp.floor);
-                boolean close = sameSpace && Math.hypot(d.posX - tp.posX, d.currentY - tp.currentY) <= 14f;
-                if (arrived || close) {
+                if (d.treatStartMillis == 0L) {
+                    // Go to the patient's ward room and wait beside the bed for them to get there
+                    assignRoom(tp);
+                    float[] spot = roomDoctorSpot(tp.roomIndex);
+                    boolean arrived = travelTo(d, true, tp.roomFloor, spot[0], spot[1], 1.5f);
+                    boolean patientInRoom = tp.isInside && tp.floor == tp.roomFloor
+                            && Math.hypot(tp.posX - tp.roomX, tp.currentY - tp.roomY) <= 24f;
+                    if (arrived) {
+                        if (d.waitStartMillis == 0L) d.waitStartMillis = nowMs;
+                        if (patientInRoom) {
+                            d.treatStartMillis = nowMs;
+                            d.waitStartMillis = 0L;
+                            currentEvent = "Doctor is tending to patient P#" + tp.id + "...";
+                        } else if (nowMs - d.waitStartMillis > 20000L) {
+                            d.state = 0;                   // patient never made it: free the doctor for someone else
+                            d.targetPatient = null;
+                            d.waitStartMillis = 0L;
+                        }
+                    } else {
+                        d.waitStartMillis = 0L;
+                    }
+                } else if (nowMs - d.treatStartMillis >= TREAT_MILLIS) {
+                    // Treatment finished
                     String curedNeed = tp.need;
                     if (curedNeed.equals("HUNGRY")) food = Math.max(0, food - 15);
                     else if (curedNeed.equals("THIRSTY")) water = Math.max(0, water - 15);
@@ -1388,12 +1517,14 @@ public class Program {
                     tp.need = "HEALTHY";
                     tp.hp = Math.min(100f, tp.hp + 40f);
                     tp.needTimer = nowMs;
+                    tp.roamTimer = nowMs;                  // rest a few seconds before wandering off again
                     d.state = 0;
                     d.targetPatient = null;
+                    d.treatStartMillis = 0L;
                     d.targetX = d.posX;
                     d.targetY = d.currentY;
                     score += 35;
-                    currentEvent = "Doctor treated patient! Supplies consumed & HP restored.";
+                    currentEvent = "Doctor treated patient P#" + tp.id + "! Supplies consumed & HP restored.";
                 }
             } else {
                 if (nowMs - d.roamTimer > 6000) {
@@ -1754,33 +1885,6 @@ public class Program {
                     g.setColor(new Color(35, 42, 50));
                     g.fillRect(0, 0, screenWidth, screenHeight);
                 }
-                g.setColor(new Color(70, 80, 95));
-                g.drawRect(50, 100, 120, 350);
-                g.drawRect(1030, 100, 120, 350);
-                g.drawRect(380, 40, 440, 260);
-                g.setColor(Color.WHITE);
-                g.setFont(new Font("Monospaced", Font.BOLD, 12));
-                TextRenderer.render(g, "[WARD ROOM A]", 60, 90);
-                TextRenderer.render(g, "[WARD ROOM B]", 1040, 90);
-                TextRenderer.render(g, "[MEDICAL STATION]", 470, 30);
-
-                g.setColor(new Color(231, 76, 60, 70));
-                g.fill(indoorLeftRooms);
-                g.fill(indoorRightRooms);
-                for (Rectangle wall : indoorCenterBlockWalls) g.fill(wall);
-                for (Rectangle wall : indoorMedicalDeskWalls) g.fill(wall);
-                g.fill(indoorTopWall);
-                g.fill(indoorBottomWallLeft);
-                g.fill(indoorBottomWallRight);
-
-                g.setColor(new Color(0, 255, 255, 180));
-                g.fillRect(indoorStairs.x, indoorStairs.y, indoorStairs.width, indoorStairs.height);
-                g.setColor(Color.BLACK);
-                g.drawRect(indoorStairs.x, indoorStairs.y, indoorStairs.width, indoorStairs.height);
-                g.setColor(Color.WHITE);
-                g.setFont(new Font("Monospaced", Font.BOLD, 13));
-                TextRenderer.render(g, "[STAIRS - PRESS E]", indoorStairs.x + indoorStairs.width + 14,
-                        indoorStairs.y - 6);
                 for (PatientData p : patients) {
                     if (p.isInside && p.floor == currentFloor) {
                         renderPatientWithSpriteAndHealth(g, (int) p.posX, (int) p.currentY, "P#" + p.id, p.need, p.hp, p.isFemale, p);
@@ -1834,8 +1938,10 @@ public class Program {
                 if (entrance >= 0) prompt = "E  ENTER " + buildingNames[entrance];
             } else if (isStorageRoom()) {
                 if (!storagePanelOpen) prompt = storagePromptFor(playerBounds);
-            } else if (playerBounds.intersects(indoorStairs)) {
-                prompt = "E  CHANGE FLOOR";
+            } else if (playerBounds.intersects(indoorStairsUp)) {
+                prompt = currentFloor < 3 ? "E  GO UP  ·  FLOOR " + (currentFloor + 1) : "E  TOP FLOOR";
+            } else if (playerBounds.intersects(indoorStairsDown)) {
+                prompt = currentFloor > 1 ? "E  GO DOWN  ·  FLOOR " + (currentFloor - 1) : "E  GROUND FLOOR";
             } else if (playerBounds.intersects(indoorExit)) {
                 prompt = "E  EXIT SHELTER";
             }
@@ -1855,10 +1961,7 @@ public class Program {
             int minimumPromptY = insideBuilding == null ? 208 : 104;
             int boxX = overseerX + PLAYER_WIDTH / 2 - width / 2;
             int boxY = spriteTop - height - 12;
-            if ("E  CHANGE FLOOR".equals(prompt)) {
-                boxX = indoorStairs.x + indoorStairs.width + 14;
-                boxY = indoorStairs.y + (indoorStairs.height - height) / 2;
-            } else if (boxY < minimumPromptY) {
+            if (boxY < minimumPromptY) {
                 int rightX = spriteLeft + spriteWidth + 12;
                 boxX = rightX + width <= WORLD_WIDTH - 10
                         ? rightX : spriteLeft - width - 12;
