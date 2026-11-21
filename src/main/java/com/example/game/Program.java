@@ -55,11 +55,16 @@ public class Program {
         private int medicine = 115;
         private int materials = 60;
         private static final int DAY_DURATION_SECONDS = 300;
+        private static final int DAYLIGHT_DURATION_SECONDS = DAY_DURATION_SECONDS / 2;
         private int secondsRemaining = DAY_DURATION_SECONDS;
         private long lastTickTime = System.currentTimeMillis();
         private String currentEvent = "Guard anti-stuck collision resolution and spawn position updated!";
         private int overseerX = 580;
         private int overseerY = 420;
+
+        private boolean isNight() {
+            return secondsRemaining <= DAYLIGHT_DURATION_SECONDS;
+        }
 
         private static final int PLAYER_WIDTH = 26;
         private static final int PLAYER_HEIGHT = 26;
@@ -169,6 +174,7 @@ public class Program {
         private static class GuardData {
             float posX, currentY;
             float targetX, targetY;
+            double flashlightAngle;
             int taskState = 0;
             long roamTimer = System.currentTimeMillis();
             Random rand = new Random();
@@ -274,6 +280,7 @@ public class Program {
             Input.keyboard().onKeyPressed(KeyEvent.VK_4, e -> dispatchDoctorToNeedyPatient());
             Input.keyboard().onKeyPressed(KeyEvent.VK_5, e -> orderPatientsBackToRooms());
             Input.keyboard().onKeyPressed(KeyEvent.VK_H, e -> hireStaffMember("Doctor", 150));
+            Input.keyboard().onKeyPressed(KeyEvent.VK_MINUS, e -> skipDaylight());
             Input.keyboard().onKeyPressed(KeyEvent.VK_F11, e -> {
                 if (!displayModeKeyDown) {
                     displayModeKeyDown = true;
@@ -288,6 +295,14 @@ public class Program {
             var graphics = Game.config().graphics();
             graphics.setDisplayMode(graphics.getDisplayMode() == DisplayMode.FULLSCREEN
                     ? DisplayMode.WINDOWED : DisplayMode.FULLSCREEN);
+        }
+
+        private void skipDaylight() {
+            if (!isNight()) {
+                secondsRemaining = DAYLIGHT_DURATION_SECONDS;
+                lastTickTime = System.currentTimeMillis();
+                currentEvent = "Night has fallen. Guards and passing cars have switched on their lights.";
+            }
         }
 
         private BufferedImage loadImage(String path) {
@@ -637,6 +652,7 @@ public class Program {
                     }
                     currentEvent = "New " + hiredRoleName + " arrived and entered facility through door!";
                     hiredRoleName = "";
+                    hireVehicleActive = false;
                 }
                 if (hireVehiclePosX > 1300) hireVehicleActive = false;
             }
@@ -800,6 +816,7 @@ public class Program {
                         g.targetY = 410 + g.rand.nextInt(90);
                     }
                 }
+                updateGuardFlashlightAim(g, targetXCoord, targetYCoord);
                 float nextX = g.posX;
                 float nextY = g.currentY;
                 float step = (g.taskState > 0) ? 1.5f : 0.6f;
@@ -823,10 +840,25 @@ public class Program {
                 lastTickTime = currentTime;
                 if (secondsRemaining > 0) {
                     secondsRemaining--;
+                    if (secondsRemaining == 0) triggerDawnEvent();
                 } else {
                     triggerDawnEvent();
                 }
             }
+        }
+
+        private void updateGuardFlashlightAim(GuardData guard, float targetX, float targetY) {
+            double dx = targetX - guard.posX;
+            double dy = targetY - guard.currentY;
+            if (Math.hypot(dx, dy) < 1.0) return;
+
+            double desiredAngle = Math.atan2(dy, dx);
+            double angleDifference = Math.atan2(
+                    Math.sin(desiredAngle - guard.flashlightAngle),
+                    Math.cos(desiredAngle - guard.flashlightAngle));
+            double maxTurnPerUpdate = 0.025;
+            guard.flashlightAngle += Math.max(-maxTurnPerUpdate,
+                    Math.min(maxTurnPerUpdate, angleDifference));
         }
 
         private void triggerDawnEvent() {
@@ -960,9 +992,86 @@ public class Program {
                     renderGuardian(g, (int) gData.posX, (int) gData.currentY, "Guard");
                 }
                 renderOverseer(g, overseerX, overseerY);
+                if (isNight()) {
+                    renderNightLighting(g);
+                    if (isOverseerInGuardLight()) renderOverseerLightGlow(g);
+                }
             }
             renderInteractionPrompt(g);
             renderHud(g);
+        }
+
+        private boolean isOverseerInGuardLight() {
+            double playerX = overseerX + PLAYER_WIDTH / 2.0;
+            double playerY = overseerY + PLAYER_HEIGHT / 2.0;
+            for (GuardData guard : guards) {
+                double dx = Math.cos(guard.flashlightAngle);
+                double dy = Math.sin(guard.flashlightAngle);
+                double originX = guard.posX + PLAYER_WIDTH / 2.0;
+                double originY = guard.currentY + PLAYER_HEIGHT / 2.0;
+                double toPlayerX = playerX - originX;
+                double toPlayerY = playerY - originY;
+                double alongBeam = toPlayerX * dx + toPlayerY * dy;
+                double acrossBeam = Math.abs(toPlayerX * -dy + toPlayerY * dx);
+                double beamHalfWidth = 7 + (42 - 7) * Math.max(0, Math.min(1, alongBeam / 150.0));
+                if (alongBeam >= 0 && alongBeam <= 150 && acrossBeam <= beamHalfWidth) return true;
+            }
+            return false;
+        }
+
+        private void renderOverseerLightGlow(Graphics2D g) {
+            Graphics2D glow = (Graphics2D) g.create();
+            glow.setColor(new Color(255, 230, 145, 48));
+            glow.fillOval(overseerX - 8, overseerY - 12, PLAYER_WIDTH + 16, PLAYER_HEIGHT + 24);
+            glow.setColor(new Color(255, 239, 183, 36));
+            glow.fillOval(overseerX - 3, overseerY - 6, PLAYER_WIDTH + 6, PLAYER_HEIGHT + 12);
+            glow.dispose();
+        }
+
+        /** Applies the outdoor night tint and draws lightweight warm beams around lights. */
+        private void renderNightLighting(Graphics2D g) {
+            Graphics2D lighting = (Graphics2D) g.create();
+            lighting.setColor(new Color(8, 13, 30, 125));
+            lighting.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+
+            // Add simple translucent beams over the tint. Avoid per-frame clear compositing,
+            // which can force the renderer into expensive software blending on large areas.
+            lighting.setColor(new Color(255, 229, 133, 105));
+
+            for (RoadTrafficCar car : roadTraffic) {
+                double direction = car.movingRight ? 1.0 : -1.0;
+                double frontX = car.movingRight ? car.x + car.width : car.x;
+                double centerY = car.laneY + ROAD_CAR_HEIGHT / 2.0;
+                int[] xs = {(int) frontX, (int) (frontX + direction * 128),
+                        (int) (frontX + direction * 128), (int) frontX};
+                int[] ys = {(int) (centerY - 8), (int) (centerY - 29),
+                        (int) (centerY + 29), (int) (centerY + 8)};
+                lighting.fillPolygon(xs, ys, 4);
+            }
+
+            for (GuardData guard : guards) {
+                double dx = Math.cos(guard.flashlightAngle);
+                double dy = Math.sin(guard.flashlightAngle);
+                double originX = guard.posX + PLAYER_WIDTH / 2.0;
+                double originY = guard.currentY + PLAYER_HEIGHT / 2.0;
+                double px = -dy, py = dx;
+                int[] xs = {(int) (originX - px * 7),
+                        (int) (originX + dx * 150 + px * 42),
+                        (int) (originX + dx * 150 - px * 42)};
+                int[] ys = {(int) (originY - py * 7),
+                        (int) (originY + dy * 150 + py * 42),
+                        (int) (originY + dy * 150 - py * 42)};
+                lighting.fillPolygon(xs, ys, 3);
+            }
+
+            for (RoadTrafficCar car : roadTraffic) {
+                int lampX = (int) Math.round(car.movingRight ? car.x + car.width - 6 : car.x + 1);
+                lighting.setColor(new Color(255, 246, 190, 235));
+                lighting.fillOval(lampX, car.laneY + 10, 5, 8);
+                lighting.fillOval(lampX, car.laneY + ROAD_CAR_HEIGHT - 18, 5, 8);
+                lighting.setColor(new Color(255, 229, 133, 105));
+            }
+            lighting.dispose();
         }
 
         private void renderInteractionPrompt(Graphics2D g) {

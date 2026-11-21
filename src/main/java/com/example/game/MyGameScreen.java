@@ -19,9 +19,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import javax.imageio.ImageIO;
 
-/** Title menu for Quarantine Haven. */
 public class MyGameScreen extends GameScreen {
-    // Kept for the existing procedural background helper methods below.
     private static final int ART_WIDTH = 640;
     private static final int ART_HEIGHT = 360;
     private static final Color CREAM = new Color(244, 237, 217);
@@ -254,14 +252,13 @@ public class MyGameScreen extends GameScreen {
         int x2 = button.x + button.width + 2;
         int y1 = button.y - 3;
         int y2 = button.y + button.height + 2;
-        // Four animated corner brackets echo the selected Continue button in the reference art.
+
         int bracket = cornerLength + (int) (pulse * 3);
         g.drawLine(x1, y1, x1 + bracket, y1); g.drawLine(x1, y1, x1, y1 + bracket);
         g.drawLine(x2, y1, x2 - bracket, y1); g.drawLine(x2, y1, x2, y1 + bracket);
         g.drawLine(x1, y2, x1 + bracket, y2); g.drawLine(x1, y2, x1, y2 - bracket);
         g.drawLine(x2, y2, x2 - bracket, y2); g.drawLine(x2, y2, x2, y2 - bracket);
 
-        // A narrow moving glint stays near the edge so the original label and icon remain clear.
         int glintX = button.x + 10 + (int) ((button.width - 20) * ((now / 1_400_000_000.0) % 1.0));
         g.setStroke(new BasicStroke(2.0f));
         g.setColor(new Color(255, 239, 217, 150));
@@ -473,13 +470,12 @@ public class MyGameScreen extends GameScreen {
         g.fillRect(109, 207, 17, 34); g.fillRect(133, 207, 17, 34);
         g.setColor(new Color(229, 219, 190));
         g.fillRect(112, 204, 11, 4); g.fillRect(136, 204, 11, 4);
-        // Medical cross on a wall placard, not a facility name sign.
+
         g.setColor(new Color(225, 212, 185));
         g.fillRect(207, 130, 24, 24);
         g.setColor(new Color(163, 63, 48));
         g.fillRect(217, 134, 5, 16); g.fillRect(212, 139, 15, 5);
 
-        // Foreground silhouettes and stacked supply boxes.
         g.setColor(new Color(42, 34, 36));
         g.fillRect(0, 320, ART_WIDTH, 40);
         g.setColor(new Color(130, 75, 49));
@@ -487,7 +483,7 @@ public class MyGameScreen extends GameScreen {
         g.fillRect(86, 301, 46, 18); g.fillRect(520, 299, 79, 20); g.fillRect(532, 286, 54, 13);
         g.setColor(new Color(239, 145, 65));
         g.fillRect(25, 281, 12, 4); g.fillRect(551, 289, 12, 4);
-        // Emergency cot lamp and a few pixel lights add depth.
+
         g.setColor(new Color(255, 187, 86));
         g.fillRect(235, 116, 12, 5); g.fillRect(500, 118, 6, 5); g.fillRect(188, 116, 6, 4);
         g.setColor(new Color(226, 125, 67));
