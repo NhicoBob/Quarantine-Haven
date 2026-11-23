@@ -707,3 +707,17 @@ java.lang.NullPointerException: Cannot read field "assignedFloor" because "d.tar
 	at de.gurkenlabs.litiengine.GameLoop.process(GameLoop.java:87)
 	at de.gurkenlabs.litiengine.UpdateLoop.run(UpdateLoop.java:57)
 
+Nov 14, 2026 2:25:06 PM de.gurkenlabs.litiengine.DefaultUncaughtExceptionHandler uncaughtException
+SEVERE: Game crashed! :(
+java.lang.IllegalStateException: Menu artwork is missing from game resources.
+	at com.example.game.MyGameScreen.loadBackgroundScene(MyGameScreen.java:157)
+	at com.example.game.MyGameScreen.<init>(MyGameScreen.java:36)
+	at com.example.game.Program.main(Program.java:30)
+
+Nov 14, 2026 2:26:17 PM de.gurkenlabs.litiengine.DefaultUncaughtExceptionHandler uncaughtException
+SEVERE: Game crashed! :(
+java.lang.IllegalStateException: Menu artwork is missing from game resources.
+	at com.example.game.MyGameScreen.loadBackgroundScene(MyGameScreen.java:157)
+	at com.example.game.MyGameScreen.<init>(MyGameScreen.java:36)
+	at com.example.game.Program.main(Program.java:30)
+

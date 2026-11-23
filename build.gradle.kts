@@ -22,6 +22,5 @@ dependencies {
 
 application {
     mainClass.set("com.example.game.Program")
-    applicationDefaultJvmArgs = listOf("--enable-native-access ALL-UNNAMED")
 }
 
