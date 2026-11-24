@@ -24,6 +24,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.PriorityQueue;
 import java.util.Random;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 public class Program {
     private static final int WORLD_WIDTH = 1200;
@@ -38,6 +39,15 @@ public class Program {
     private static final float ARRIVAL_TRUCK_SPEED = 132.0f;
     private static final int ARRIVAL_TRUCK_Y = ROAD_LANE_UPPER_Y + (ROAD_CAR_HEIGHT - ARRIVAL_TRUCK_HEIGHT) / 2;
     private static final float HIRE_DROP_OFF_X = 700f;   // the recruitment van drops the new hire when it passes the gate
+    // Pedestrians stroll along the pavement between the wall and the road (much slower than the cars)
+    private static final int PEDESTRIAN_HEIGHT = 44;
+    private static final float PEDESTRIAN_SPEED = 26.0f;       // px per second (cars do 132)
+    private static final int PEDESTRIAN_LANE_RIGHT_Y = 591;    // feet of someone walking right
+    private static final int PEDESTRIAN_LANE_LEFT_Y = 603;     // feet of someone walking left (nearer the road)
+    private static final int PEDESTRIAN_MAX = 5;
+    private static final long PEDESTRIAN_FRAME_MILLIS = 120L;
+    private static final int PEDESTRIAN_VARIANTS = 6;      // 3 men + 3 women (pedestrian_1..6_walk_side.png)
+    private static final float[] PEDESTRIAN_HUES = {0.00f, 0.33f, 0.08f, 0.78f, 0.50f, 0.92f};   // only used if the PNGs are missing
 
     public static void main(String[] args) {
         System.setProperty("java.awt.headless", "false");
@@ -64,7 +74,7 @@ public class Program {
         private static final int DAYLIGHT_DURATION_SECONDS = DAY_DURATION_SECONDS / 2;
         private int secondsRemaining = DAY_DURATION_SECONDS;
         private long lastTickTime = System.currentTimeMillis();
-        private String currentEvent = "Welcome back, Overseer. Press [H] to hire staff.";
+        private String currentEvent = "Welcome to Quarantine Haven! Follow the tutorial card (press T to skip it).";
         private int overseerX = 580;
         private int overseerY = 420;
 
@@ -86,7 +96,8 @@ public class Program {
         private int currentFloor = 1;
 
         private BufferedImage mapBgImage;
-        private BufferedImage interiorBgImage;
+        private BufferedImage interiorBgImage;       // ground floor: has the exit door
+        private BufferedImage interiorUpperBgImage;  // floors 2 and 3: same ward without the exit
         private BufferedImage overseerSheet;
         // Overseer animation frames (64x64 each): side view faces right, left is mirrored at load time
         private static final int OVERSEER_FRAME_SIZE = 64;
@@ -130,6 +141,63 @@ public class Program {
         private boolean interactionKeyDown;
         private boolean displayModeKeyDown;
 
+        // ---------- QUARANTINE: arrivals and discharge ----------
+        private static final int START_PATIENTS = 3;        // patients on day 1
+        private static final int DAILY_NEW_PATIENTS = 2;    // arriving at the gate every dawn
+        private static final int QUARANTINE_DAYS = 5;       // days a patient stays before going home
+        private static final float GATE_MOUTH_X = 710f;     // where patients line up with the gate (top-left of 26px box)
+        private static final float GATE_MOUTH_Y = 440f;     // just inside the grounds
+        private static final float GATE_OUTSIDE_Y = 590f;   // on the pavement outside the wall
+        private static final float GATE_WALK_SPEED = 1.1f;
+        private int nextPatientId = 1;
+        private int dischargedCount = 0;
+        private final List<PatientData> departedPatients = new ArrayList<>();
+
+        // ---------- NOTICES (pop-ups bottom right) ----------
+        private static class Notice {
+            String text;
+            long expireMillis;
+            Color color;
+        }
+        private final List<Notice> notices = new CopyOnWriteArrayList<>();
+
+        private void addNotice(String text, Color color) {
+            Notice n = new Notice();
+            n.text = text;
+            n.color = color;
+            n.expireMillis = System.currentTimeMillis() + 7000L;
+            notices.add(n);
+            while (notices.size() > 4) notices.remove(0);
+        }
+
+        // ---------- TUTORIAL (first day) ----------
+        private static final String[] TUTORIAL_TITLES = {
+                "MOVE AROUND", "ENTER A WARD", "LEAVE THE WARD", "SICK PATIENT", "SUPPLIES",
+                "CLEAN UP", "RECALL PATIENTS", "HIRING STAFF", "STORAGE ROOM", "YOU'RE READY"};
+        private static final String[] TUTORIAL_TEXT = {
+                "Welcome, Overseer! Keep your patients alive. After 5 days of quarantine they get to go home. "
+                        + "Walk around with W A S D.",
+                "Walk up to the door of the 1st or 2nd building and press E to go inside.",
+                "Inside, the UP stairs are on the left and the DOWN stairs on the right (press E on them). "
+                        + "Walk to the exit at the bottom of the ground floor and press E to go back outside.",
+                "Uh-oh, a patient fell sick! Doctors head over by themselves, or press 4 to send one right now.",
+                "Patients get hungry, thirsty or sick. Press 1 to hand out rations or 2 for medicine. "
+                        + "Your food, water, medicine and materials are in the top bar.",
+                "Waste piles up. Press 3 to send a guard to haul the trash away (costs 10 materials).",
+                "Press 5 to call every patient back to their own room.",
+                "Press H to open the hire menu. Pick a Doctor or a Guard, or press ESC to close it.",
+                "The 3rd building is the storage room. Walk to its door and press E to manage your stock.",
+                "Trucks arrive at dawn with supplies and 2 new patients. Patients that survive 5 days walk out "
+                        + "the gate. Press - to skip to night. Good luck, Overseer!"};
+        private boolean tutorialActive = true;
+        private int tutorialStep = 0;
+        private long tutorialStepStartMillis = System.currentTimeMillis();
+        private float tutMoveDist = 0f;
+        private boolean tutEnteredWard = false, tutEnteredStorage = false, tutHireSeen = false;
+        private boolean tutDoctorPressed = false, tutRecallPressed = false;
+        private final boolean[] tutTaskPressed = new boolean[6];
+        private PatientData tutPatient = null;
+
         // ---------- HIRE MENU (press H) ----------
         private static final String[] HIRE_ROLES = {"Doctor", "Guard"};
         private static final int[] HIRE_COSTS = {150, 100};
@@ -151,11 +219,26 @@ public class Program {
             boolean hire;                // the recruitment van (drives in the normal traffic flow)
             String label;                // small tag drawn above the van
         }
-        private final List<RoadTrafficCar> roadTraffic = new ArrayList<>();
+        private final List<RoadTrafficCar> roadTraffic = new CopyOnWriteArrayList<>();
         private final Random roadTrafficRandom = new Random();
         private BufferedImage[] roadCarSprites;
         private long nextRoadTrafficSpawn;
         private long lastRoadTrafficUpdateNanos = System.nanoTime();
+
+        // ---------- PEDESTRIANS ----------
+        private static class Pedestrian {
+            float x;
+            int groundY;
+            boolean movingRight;
+            int variant;
+            long animOffsetMillis;
+        }
+        private final List<Pedestrian> pedestrians = new CopyOnWriteArrayList<>();
+        private final Random pedestrianRandom = new Random();
+        private BufferedImage[][] pedestrianFramesRight = new BufferedImage[PEDESTRIAN_VARIANTS][];
+        private BufferedImage[][] pedestrianFramesLeft = new BufferedImage[PEDESTRIAN_VARIANTS][];
+        private long nextPedestrianSpawn = System.currentTimeMillis() + 2000L;
+        private long lastPedestrianUpdateNanos = System.nanoTime();
 
         // Shared base for everything that walks around and uses the nav grids
         private static class NavActor {
@@ -203,7 +286,7 @@ public class Program {
                 this.floor = floor;
             }
         }
-        private List<DoctorData> doctors = new ArrayList<>();
+        private List<DoctorData> doctors = new CopyOnWriteArrayList<>();
 
         private static class PatientData extends NavActor {
             int id;
@@ -217,6 +300,10 @@ public class Program {
             int roomFloor = 1;
             int roomIndex = -1;          // -1 = no bed assigned yet (see assignRoom)
             boolean orderedToRoom = false;
+            int arrivalDay = 1;          // quarantine day 1 = the day they arrive
+            boolean arriving = false;    // walking in through the gate
+            boolean leaving = false;     // quarantine finished: heading for the gate
+            boolean exiting = false;     // walking out through the gate
             boolean isFemale;
             String need = "HEALTHY";
             float hp = 100.0f;
@@ -237,7 +324,7 @@ public class Program {
                 this.destFloor = floor;
             }
         }
-        private List<PatientData> patients = new ArrayList<>();
+        private List<PatientData> patients = new CopyOnWriteArrayList<>();
 
         private static class GuardData extends NavActor {
             float targetX, targetY;
@@ -257,7 +344,7 @@ public class Program {
                 this.targetY = startY;
             }
         }
-        private List<GuardData> guards = new ArrayList<>();
+        private List<GuardData> guards = new CopyOnWriteArrayList<>();
         private List<StaffUnit> staffList = new ArrayList<>();
 
         private final Rectangle[] buildingWalls = {
@@ -292,16 +379,22 @@ public class Program {
         // room numbers: 0-6 left wall, 7-13 right wall, 14-16 centre block (west column), 17-19 centre block (east column).
         // Bed order: the top row (0, 7, 14, 17) sits behind the HUD panel, so those rooms are used last.
         private static final int[] WARD_ROOM_ORDER = {1, 8, 2, 9, 3, 10, 4, 11, 5, 12, 6, 13, 15, 18, 16, 19, 0, 7, 14, 17};
-        private final Rectangle[] indoorSolids = buildIndoorSolids();
+        private final Rectangle[] indoorSolids = buildIndoorSolids(true);          // ground floor (with exit console)
+        private final Rectangle[] indoorSolidsUpper = buildIndoorSolids(false);    // floors 2-3 (no exit)
         private final Rectangle indoorStairsUp = new Rectangle(225, 112, 150, 44);
         private final Rectangle indoorStairsDown = new Rectangle(820, 112, 155, 44);
         private final Rectangle indoorExit = new Rectangle(550, 654, 100, 56);
+
+        // ---------- RECEPTIONISTS (one at the front desk on every floor) ----------
+        private static final float RECEPTION_X = 572f, RECEPTION_Y = 346f;   // stands in the gap of the medical desk
+        private final Rectangle receptionZone = new Rectangle(520, 330, 162, 92);
+        private BufferedImage[] receptionistFrames;
 
         private static int wardBandTop(int band) {
             return WARD_BAND_TOP + WARD_BAND_PERIOD * band;
         }
 
-        private static Rectangle[] buildIndoorSolids() {
+        private static Rectangle[] buildIndoorSolids(boolean withExitConsole) {
             List<Rectangle> r = new ArrayList<>();
             r.add(new Rectangle(0, 0, WORLD_WIDTH, 10));                    // top wall
             r.add(new Rectangle(0, 708, WORLD_WIDTH, 12));                  // bottom wall
@@ -331,7 +424,7 @@ public class Program {
             r.add(new Rectangle(225, 0, 150, 114));                         // UP staircase
             r.add(new Rectangle(820, 0, 155, 114));                         // DOWN staircase
             r.add(new Rectangle(538, 340, 126, 48));                        // medical station counter
-            r.add(new Rectangle(495, 652, 55, 36));                         // exit console
+            if (withExitConsole) r.add(new Rectangle(495, 652, 55, 36));    // exit console (ground floor only)
             r.add(new Rectangle(472, 324, 16, 24));                         // plants beside the medical block
             r.add(new Rectangle(718, 324, 16, 24));
             // (the corridor plants beside the ward doorways are decoration only: they must not block a door)
@@ -423,6 +516,13 @@ public class Program {
             super("SHELTER_SCREEN");
             mapBgImage = loadImage("/map_bg.png");
             interiorBgImage = loadImage("/interior_map.png");
+            interiorUpperBgImage = loadImage("/interior_map_upper.png");
+            if (interiorUpperBgImage == null) {
+                // Not on the classpath (missing file, or the build output is stale): make the no-exit version
+                // from the normal ward art instead, so floors 2-3 never show the exit.
+                System.err.println("interior_map_upper.png not found on the classpath - building the upper-floor art from interior_map.png");
+                interiorUpperBgImage = buildUpperFloorBg(interiorBgImage);
+            }
             storageBgImage = loadImage("/storage_room.png");
             wallOverlayImage = loadImage("/wall_gate_overlay.png");
             if (wallOverlayImage == null) {
@@ -440,6 +540,9 @@ public class Program {
             doctorWalkRight = loadFrames("/doctor_walk_side.png", false);
             doctorWalkLeft = loadFrames("/doctor_walk_side.png", true);
             doctorIdleDown = loadFrames("/doctor_idle_down.png", false);
+            // Own receptionist art is used if you add it (64x64 frames in a row); otherwise the nurse is recoloured
+            receptionistFrames = loadFrames("/receptionist_idle_down.png", false);
+            if (receptionistFrames == null && doctorIdleDown != null) receptionistFrames = tintFrames(doctorIdleDown);
             guardianSheet = trimTransparent(loadImage("/guardian_sprite.png"));
             guardWalkDown = loadFrames("/guard_walk_down.png", false);
             guardWalkUp = loadFrames("/guard_walk_up.png", false);
@@ -453,6 +556,7 @@ public class Program {
             malePatientWalkRight = loadFrames("/male_patient_walk_side.png", false);
             malePatientWalkLeft = loadFrames("/male_patient_walk_side.png", true);
             malePatientIdleDown = loadFrames("/male_patient_idle_down.png", false);
+            loadPedestrianSprites();
             supplyTruckSprite = trimTransparent(loadImage("/supply_arrival_truck.png"));
             garbageTruckSprite = trimTransparent(loadImage("/waste_arrival_truck.png"));
             trashSprite = trimTransparent(loadImage("/trash_sprite.png"));
@@ -465,12 +569,10 @@ public class Program {
             };
             nextRoadTrafficSpawn = System.currentTimeMillis() + 300 + roadTrafficRandom.nextInt(900);
 
-            for (int i = 1; i <= 10; i++) {
-                boolean inside = (i % 2 == 0);
-                int floor = (i % 3) == 0 ? 3 : ((i % 2 == 0) ? 2 : 1);
-                float startX = inside ? (200 + (i * 70) % 700) : (180 + (i * 90) % 850);
-                float startY = inside ? (320 + (i * 20) % 150) : (350 + (i * 15) % 120);
-                patients.add(new PatientData(i, startX, startY, inside, floor));
+            // Day 1 starts small: 3 patients out in the courtyard (2 more arrive through the gate every dawn)
+            float[][] startSpots = {{360, 400}, {620, 392}, {820, 408}};
+            for (int i = 0; i < START_PATIENTS; i++) {
+                patients.add(new PatientData(nextPatientId++, startSpots[i][0], startSpots[i][1], false, 1));
             }
 
             doctors.add(new DoctorData(300, 430, false, 1)); // was inside a wall
@@ -524,6 +626,7 @@ public class Program {
             Input.keyboard().onKeyPressed(KeyEvent.VK_4, e -> { if (!hirePanelOpen) dispatchDoctorToNeedyPatient(); });
             Input.keyboard().onKeyPressed(KeyEvent.VK_5, e -> { if (!hirePanelOpen) orderPatientsBackToRooms(); });
             Input.keyboard().onKeyPressed(KeyEvent.VK_H, e -> toggleHirePanel());
+            Input.keyboard().onKeyPressed(KeyEvent.VK_T, e -> skipTutorial());
             Input.keyboard().onKeyPressed(KeyEvent.VK_MINUS, e -> { if (!hirePanelOpen && !storagePanelOpen) skipDaylight(); });
             Input.keyboard().onKeyPressed(KeyEvent.VK_F11, e -> {
                 if (!displayModeKeyDown) {
@@ -585,6 +688,189 @@ public class Program {
             return flipped;
         }
 
+        /**
+         * Paints the exit sign, console, door and the yellow path out of the ward art by copying clean floor
+         * tiles over them. Rectangles are in the 1024x534 artwork's pixels and scale to whatever size the image is.
+         */
+        private BufferedImage buildUpperFloorBg(BufferedImage base) {
+            if (base == null) return null;
+            // {x0, y0, x1, y1, copy-from x offset, copy-from y offset}
+            int[][] patches = {
+                    {503, 267, 522, 286, -34, 0}, {503, 298, 522, 317, -189, 17}, {503, 326, 522, 345, 51, 17},
+                    {503, 353, 522, 372, 34, 0}, {503, 380, 522, 399, 34, 0}, {503, 408, 522, 427, 34, 0},
+                    {503, 435, 522, 454, -206, 0}, {418, 470, 592, 534, 206, 0}};
+            double sx = base.getWidth() / 1024.0, sy = base.getHeight() / 534.0;
+            BufferedImage out = new BufferedImage(base.getWidth(), base.getHeight(), BufferedImage.TYPE_INT_ARGB);
+            Graphics2D og = out.createGraphics();
+            og.drawImage(base, 0, 0, null);
+            for (int[] pt : patches) {
+                int x0 = (int) Math.round(pt[0] * sx), y0 = (int) Math.round(pt[1] * sy);
+                int x1 = Math.min(base.getWidth(), (int) Math.round(pt[2] * sx));
+                int y1 = Math.min(base.getHeight(), (int) Math.round(pt[3] * sy));
+                int fromX = x0 + (int) Math.round(pt[4] * sx), fromY = y0 + (int) Math.round(pt[5] * sy);
+                int w = x1 - x0, h = y1 - y0;
+                if (w <= 0 || h <= 0 || fromX < 0 || fromY < 0 || fromX + w > base.getWidth() || fromY + h > base.getHeight()) continue;
+                og.drawImage(base.getSubimage(fromX, fromY, w, h), x0, y0, null);
+            }
+            og.dispose();
+            return out;
+        }
+
+        // ---------- PEDESTRIANS: sprites ----------
+        /** Uses /pedestrian_N_walk_side.png (64px frames, facing right); without them it falls back to recoloured guards. */
+        private void loadPedestrianSprites() {
+            for (int v = 0; v < PEDESTRIAN_VARIANTS; v++) {
+                BufferedImage[] right = loadFrames("/pedestrian_" + (v + 1) + "_walk_side.png", false);
+                if (right == null && guardWalkRight != null) right = recolorGuardFrames(guardWalkRight, PEDESTRIAN_HUES[v]);
+                if (right == null) continue;
+                pedestrianFramesRight[v] = right;
+                BufferedImage[] left = new BufferedImage[right.length];
+                for (int i = 0; i < right.length; i++) left[i] = flipHorizontally(right[i]);
+                pedestrianFramesLeft[v] = left;
+            }
+        }
+
+        /** Navy jacket + cap -> the given hue, gold trim -> pale. Trousers, hair and skin are left alone. */
+        private BufferedImage[] recolorGuardFrames(BufferedImage[] source, float targetHue) {
+            BufferedImage[] result = new BufferedImage[source.length];
+            for (int i = 0; i < source.length; i++) {
+                BufferedImage in = source[i];
+                BufferedImage out = new BufferedImage(in.getWidth(), in.getHeight(), BufferedImage.TYPE_INT_ARGB);
+                for (int y = 0; y < in.getHeight(); y++) {
+                    for (int x = 0; x < in.getWidth(); x++) {
+                        int argb = in.getRGB(x, y);
+                        if ((argb >>> 24) > 0) {
+                            float[] hsb = Color.RGBtoHSB((argb >> 16) & 255, (argb >> 8) & 255, argb & 255, null);
+                            float h = hsb[0], sat = hsb[1], v = hsb[2];
+                            boolean change = false;
+                            if (h >= 0.09f && h <= 0.18f && sat > 0.45f && v > 0.4f) {          // gold trim
+                                sat = 0.12f;
+                                v = Math.min(1f, v * 1.1f);
+                                change = true;
+                            } else if (h >= 0.55f && h <= 0.72f && sat > 0.2f && (v > 0.36f || y < 24)) {   // jacket + cap
+                                h = targetHue;
+                                sat = Math.min(1f, sat * 1.5f);
+                                v = Math.min(1f, v * 1.15f);
+                                change = true;
+                            }
+                            if (change) argb = (argb & 0xFF000000) | (Color.HSBtoRGB(h, sat, v) & 0x00FFFFFF);
+                        }
+                        out.setRGB(x, y, argb);
+                    }
+                }
+                result[i] = out;
+            }
+            return result;
+        }
+
+        // ---------- PEDESTRIANS: logic ----------
+        private void updatePedestrians() {
+            long nowNanos = System.nanoTime();
+            float deltaSeconds = Math.max(0f, (nowNanos - lastPedestrianUpdateNanos) / 1_000_000_000f);
+            lastPedestrianUpdateNanos = nowNanos;
+            long nowMillis = System.currentTimeMillis();
+
+            if (nowMillis >= nextPedestrianSpawn) {
+                nextPedestrianSpawn = nowMillis + 3500 + pedestrianRandom.nextInt(6500);
+                if (pedestrians.size() < PEDESTRIAN_MAX) spawnPedestrian();
+            }
+            for (Pedestrian ped : pedestrians) {
+                ped.x += (ped.movingRight ? 1 : -1) * PEDESTRIAN_SPEED * deltaSeconds;
+                if (ped.x < -40 || ped.x > WORLD_WIDTH + 40) pedestrians.remove(ped);
+            }
+        }
+
+        private void spawnPedestrian() {
+            int variant = pedestrianRandom.nextInt(PEDESTRIAN_VARIANTS);
+            if (pedestrianFramesRight[variant] == null) return;
+            boolean movingRight = pedestrianRandom.nextBoolean();
+            float startX = movingRight ? -30 : WORLD_WIDTH + 30;
+            int groundY = movingRight ? PEDESTRIAN_LANE_RIGHT_Y : PEDESTRIAN_LANE_LEFT_Y;
+            for (Pedestrian other : pedestrians) {              // keep walkers in the same direction apart
+                if (other.movingRight == movingRight && Math.abs(other.x - startX) < 90) return;
+            }
+            Pedestrian ped = new Pedestrian();
+            ped.x = startX;
+            ped.groundY = groundY;
+            ped.movingRight = movingRight;
+            ped.variant = variant;
+            ped.animOffsetMillis = pedestrianRandom.nextInt(720);
+            pedestrians.add(ped);
+        }
+
+        private void renderPedestrians(Graphics2D g) {
+            long nowMillis = System.currentTimeMillis();
+            for (int lane = 0; lane < 2; lane++) {              // farther lane first, so nearer walkers overlap it
+                int laneY = lane == 0 ? PEDESTRIAN_LANE_RIGHT_Y : PEDESTRIAN_LANE_LEFT_Y;
+                for (Pedestrian ped : pedestrians) {
+                    if (ped.groundY != laneY) continue;
+                    BufferedImage[] frames = ped.movingRight ? pedestrianFramesRight[ped.variant] : pedestrianFramesLeft[ped.variant];
+                    if (frames == null || frames.length == 0) continue;
+                    BufferedImage frame = frames[(int) (((nowMillis + ped.animOffsetMillis) / PEDESTRIAN_FRAME_MILLIS) % frames.length)];
+                    int width = Math.max(1, (int) Math.round(PEDESTRIAN_HEIGHT * frame.getWidth() / (double) frame.getHeight()));
+                    int drawX = Math.round(ped.x) - width / 2;
+                    int drawY = ped.groundY - PEDESTRIAN_HEIGHT;
+                    g.setColor(new Color(5, 10, 16, 70));
+                    g.fill(new Ellipse2D.Double(drawX + width * 0.2, ped.groundY - 3, width * 0.6, 6));
+                    g.drawImage(frame, drawX, drawY, width, PEDESTRIAN_HEIGHT, null);
+                }
+            }
+        }
+
+        /** Recolours the strongly red parts (cap cross etc.) of the nurse frames to blue so the receptionist looks different. */
+        private BufferedImage[] tintFrames(BufferedImage[] source) {
+            BufferedImage[] result = new BufferedImage[source.length];
+            for (int i = 0; i < source.length; i++) {
+                BufferedImage in = source[i];
+                BufferedImage out = new BufferedImage(in.getWidth(), in.getHeight(), BufferedImage.TYPE_INT_ARGB);
+                for (int y = 0; y < in.getHeight(); y++) {
+                    for (int x = 0; x < in.getWidth(); x++) {
+                        int argb = in.getRGB(x, y);
+                        if ((argb >>> 24) > 0) {
+                            float[] hsb = Color.RGBtoHSB((argb >> 16) & 255, (argb >> 8) & 255, argb & 255, null);
+                            boolean red = (hsb[0] < 0.04f || hsb[0] > 0.95f) && hsb[1] > 0.4f && hsb[2] > 0.4f;
+                            if (red) argb = (argb & 0xFF000000) | (Color.HSBtoRGB(0.58f, hsb[1], hsb[2]) & 0x00FFFFFF);
+                        }
+                        out.setRGB(x, y, argb);
+                    }
+                }
+                result[i] = out;
+            }
+            return result;
+        }
+
+        private void renderReceptionist(Graphics2D g) {
+            BufferedImage frame = null;
+            if (receptionistFrames != null && receptionistFrames.length > 0) {
+                frame = receptionistFrames[(int) ((System.nanoTime() / 450_000_000L) % receptionistFrames.length)];
+            }
+            int x = (int) RECEPTION_X, y = (int) RECEPTION_Y;
+            if (frame != null) {
+                drawAnimatedFrame(g, frame, x, y, 56);
+            } else if (doctorSheet != null) {
+                drawCharacterSprite(g, doctorSheet, x, y, 56);
+            } else {
+                renderCharacterBadge(g, x, y, new Color(110, 170, 230), "Receptionist", "REC");
+            }
+            drawEntityLabel(g, "Receptionist F" + currentFloor, x + PLAYER_WIDTH / 2, y + 62, new Color(200, 225, 250));
+        }
+
+        /** Talking to the receptionist gives a quick report on the floor you are standing on. */
+        private void receptionistReport() {
+            int here = 0, needCare = 0;
+            for (PatientData p : patients) {
+                if (p.isInside && p.floor == currentFloor && !p.arriving) {
+                    here++;
+                    if (!p.need.equals("HEALTHY")) needCare++;
+                }
+            }
+            String msg = "Receptionist: Floor " + currentFloor + " has " + here + " patient" + (here == 1 ? "" : "s")
+                    + (needCare > 0 ? ", " + needCare + " need care." : ", all doing fine.")
+                    + "  " + patients.size() + " residents in total.";
+            currentEvent = msg;
+            addNotice(msg, new Color(132, 207, 228));
+        }
+
         private BufferedImage[] loadFrames(String path, boolean mirrored) {
             BufferedImage sheet = loadImage(path);
             if (sheet == null) return null;
@@ -608,7 +894,7 @@ public class Program {
                 return !intersectsAny(player, storageSolids);
             }
             if (insideBuilding != null) {
-                return !intersectsAny(player, indoorSolids);
+                return !intersectsAny(player, currentFloor > 1 ? indoorSolidsUpper : indoorSolids);
             }
             if (player.y < 60 || player.y + player.height > 560) return false;
             if (player.intersects(bottomWallLeft) || player.intersects(bottomWallRight) || player.intersects(gateWall) ||
@@ -659,6 +945,7 @@ public class Program {
             else if (dirY > 0) overseerFacing = FACE_DOWN;
 
             if (overseerX != startX || overseerY != startY) {
+                tutMoveDist += Math.abs(overseerX - startX) + Math.abs(overseerY - startY);
                 long now = System.nanoTime();
                 // Restart the walk cycle on the first step so it always begins on frame 0
                 if (now - overseerLastMoveNanos > OVERSEER_WALK_HOLD_NANOS) overseerWalkStartNanos = now;
@@ -721,10 +1008,14 @@ public class Program {
                     }
                     return;
                 }
-                if (playerBounds.intersects(indoorExit)) {
+                if (playerBounds.intersects(receptionZone)) {
+                    receptionistReport();
+                } else if (currentFloor == 1 && playerBounds.intersects(indoorExit)) {
                     exitBuilding();
-                } else {
+                } else if (currentFloor == 1) {
                     currentEvent = "UP stairs are on the left, DOWN stairs on the right; the exit door is at the bottom.";
+                } else {
+                    currentEvent = "UP stairs are on the left, DOWN stairs on the right. The exit is on the ground floor.";
                 }
                 return;
             }
@@ -741,17 +1032,23 @@ public class Program {
             currentFloor = 1;
             storagePanelOpen = false;
             if (STORAGE_ROOM_NAME.equals(buildingName)) {
+                tutEnteredStorage = true;
                 overseerX = storageSpawnX;
                 overseerY = storageSpawnY;
                 currentEvent = "Entered the storage room. Use the racks to store/take stock and the terminal to manage it.";
                 return;
             }
+            tutEnteredWard = true;
             overseerX = 584;
             overseerY = 620;
             currentEvent = "Entered " + buildingName + " [Floor 1]. Walk to cyan stairs to climb floors!";
         }
 
         private void exitBuilding() {
+            if (insideBuilding != null && !isStorageRoom() && currentFloor != 1) {
+                currentEvent = "The exit is on the ground floor - take the DOWN stairs (right) first.";
+                return;
+            }
             if (insideBuilding != null) {
                 insideBuilding = null;
                 storagePanelOpen = false;
@@ -762,6 +1059,7 @@ public class Program {
         }
 
         private void assignTaskToNearestStaff(int taskType) {
+            if (taskType >= 0 && taskType < tutTaskPressed.length) tutTaskPressed[taskType] = true;
             if (taskType == 1) {
                 if (food >= 20 && water >= 20) {
                     food -= 20;
@@ -802,6 +1100,7 @@ public class Program {
         }
 
         private void dispatchDoctorToNeedyPatient() {
+            tutDoctorPressed = true;
             PatientData needyPatient = null;
             for (PatientData p : patients) {
                 if (!p.need.equals("HEALTHY")) {
@@ -836,6 +1135,7 @@ public class Program {
         }
 
         private void orderPatientsBackToRooms() {
+            tutRecallPressed = true;
             for (PatientData p : patients) {
                 p.orderedToRoom = true;
             }
@@ -1075,18 +1375,24 @@ public class Program {
 
         private void updateGameLoop() {
             updateRoadTraffic();
+            updatePedestrians();
+            updateTutorial();
 
             List<PatientData> deadPatients = new ArrayList<>();
             for (PatientData p : patients) {
-                if (p.need.equals("HEALTHY")) {
-                    int baseThreshold = 25000;
-                    int sicknessThreshold = Math.max(6000, baseThreshold - ((day - 1) * 4000));
-                    if (System.currentTimeMillis() - p.needTimer > sicknessThreshold + p.rand.nextInt(8000)) {
-                        p.needTimer = System.currentTimeMillis();
-                        String[] needsList = {"HUNGRY", "THIRSTY", "SICK"};
-                        p.need = needsList[p.rand.nextInt(needsList.length)];
+                if (p.leaving || p.arriving) {
+                    // arriving / discharged patients stay out of the sickness cycle
+                } else if (p.need.equals("HEALTHY")) {
+                    if (!tutorialActive) {   // the tutorial controls when someone gets sick
+                        int baseThreshold = 25000;
+                        int sicknessThreshold = Math.max(6000, baseThreshold - ((day - 1) * 4000));
+                        if (System.currentTimeMillis() - p.needTimer > sicknessThreshold + p.rand.nextInt(8000)) {
+                            p.needTimer = System.currentTimeMillis();
+                            String[] needsList = {"HUNGRY", "THIRSTY", "SICK"};
+                            p.need = needsList[p.rand.nextInt(needsList.length)];
+                        }
                     }
-                } else {
+                } else if (!tutorialActive) {   // no one gets worse while you are still learning
                     p.hp -= 0.05f;
                     if (p.hp <= 0) {
                         deadPatients.add(p);
@@ -1094,6 +1400,10 @@ public class Program {
                     }
                 }
                 updatePatientMovement(p);
+            }
+            if (!departedPatients.isEmpty()) {
+                patients.removeAll(departedPatients);
+                departedPatients.clear();
             }
 
             if (!deadPatients.isEmpty()) {
@@ -1564,6 +1874,35 @@ public class Program {
         private void updatePatientMovementLogic(PatientData p) {
             long nowMs = System.currentTimeMillis();
             assignRoom(p);
+
+            // Just arrived: walks up from the pavement through the gate into the grounds
+            if (p.arriving) {
+                p.currentY -= GATE_WALK_SPEED;
+                if (p.currentY <= GATE_MOUTH_Y) {
+                    p.currentY = GATE_MOUTH_Y;
+                    p.arriving = false;
+                    p.roamTimer = nowMs;
+                }
+                return;
+            }
+            // Quarantine finished: walks to the gate, then straight out through it
+            if (p.leaving) {
+                if (p.exiting) {
+                    p.posX += (GATE_MOUTH_X - p.posX) * 0.08f;
+                    p.currentY += GATE_WALK_SPEED;
+                    if (p.currentY >= GATE_OUTSIDE_Y && !departedPatients.contains(p)) {
+                        departedPatients.add(p);
+                        dischargedCount++;
+                        score += 75;
+                        String msg = "P#" + p.id + " completed " + QUARANTINE_DAYS + " days of quarantine and has left the facility!";
+                        currentEvent = msg + " (+75)";
+                        addNotice(msg + "  +75", new Color(132, 214, 165));
+                    }
+                } else if (travelTo(p, false, 1, GATE_MOUTH_X, GATE_MOUTH_Y, 1.2f)) {
+                    p.exiting = true;
+                }
+                return;
+            }
             if (isPatientBeingTended(p)) return;            // stands still while a doctor works on them
 
             // Patients who need care (or were recalled with [5]) go to their own bed and wait there for a doctor
@@ -1632,7 +1971,7 @@ public class Program {
             long nowMs = System.currentTimeMillis();
 
             // Patient died / was removed while the doctor was on the way
-            if (d.state == 1 && (d.targetPatient == null || !patients.contains(d.targetPatient))) {
+            if (d.state == 1 && (d.targetPatient == null || !patients.contains(d.targetPatient) || d.targetPatient.leaving)) {
                 d.state = 0;
                 d.targetPatient = null;
                 d.treatStartMillis = 0L;
@@ -1994,13 +2333,26 @@ public class Program {
             supplyTruckPosX = -getArrivalTruckWidth(supplyTruckSprite);
             garbageTruckActive = true;
             garbageTruckPosX = -getArrivalTruckWidth(garbageTruckSprite) - 220;
-            int currentCount = patients.size();
-            int addCount = Math.max(5, currentCount);
-            for (int i = 1; i <= addCount; i++) {
-                int newId = currentCount + i;
-                boolean inside = (newId % 2 == 0);
-                int floor = (newId % 3) == 0 ? 3 : ((newId % 2 == 0) ? 2 : 1);
-                patients.add(new PatientData(newId, 200 + (newId * 40) % 750, 320 + (newId * 15) % 180, inside, floor));
+            // Patients who have survived their quarantine are discharged and walk out through the gate
+            int discharged = 0;
+            for (PatientData p : patients) {
+                if (!p.leaving && !p.arriving && day - p.arrivalDay >= QUARANTINE_DAYS) {
+                    p.leaving = true;
+                    p.exiting = false;
+                    p.orderedToRoom = false;
+                    p.need = "HEALTHY";                 // sent home with a clean bill of health
+                    resetNav(p.nav);
+                    discharged++;
+                    addNotice("P#" + p.id + " finished " + QUARANTINE_DAYS + " days of quarantine - heading for the gate!",
+                            new Color(245, 200, 112));
+                }
+            }
+            // New patients walk in through the gate
+            for (int i = 0; i < DAILY_NEW_PATIENTS; i++) {
+                PatientData newcomer = new PatientData(nextPatientId++, 640 + i * 120, GATE_OUTSIDE_Y, false, 1);
+                newcomer.arrivalDay = day;
+                newcomer.arriving = true;
+                patients.add(newcomer);
             }
             if (stackedTrashCount > 0) {
                 score += stackedTrashCount * 50;
@@ -2015,7 +2367,9 @@ public class Program {
             water -= 30;
             waste = Math.min(100, waste + 10);
             score += 150;
-            currentEvent = "DAWN (Day " + day + "): Population grew to " + patients.size() + " patients.";
+            currentEvent = "DAWN (Day " + day + "): " + DAILY_NEW_PATIENTS + " new patients arrived at the gate"
+                    + (discharged > 0 ? ", " + discharged + " finished quarantine and are leaving." : ".");
+            addNotice("DAY " + day + ": " + DAILY_NEW_PATIENTS + " new patients are arriving.", new Color(132, 207, 228));
         }
 
         @Override
@@ -2048,16 +2402,20 @@ public class Program {
                 renderStorageRoom(g);
                 renderInteractionPrompt(g);
                 renderHud(g);
+                renderOverlays(g);
                 if (storagePanelOpen) renderStoragePanel(g);
+                if (hirePanelOpen) renderHirePanel(g);
                 return;
             }
             if (insideBuilding != null) {
-                if (interiorBgImage != null) {
-                    g.drawImage(interiorBgImage, 0, 0, screenWidth, screenHeight, null);
+                BufferedImage wardBg = currentFloor > 1 ? interiorUpperBgImage : interiorBgImage;
+                if (wardBg != null) {
+                    g.drawImage(wardBg, 0, 0, screenWidth, screenHeight, null);
                 } else {
                     g.setColor(new Color(35, 42, 50));
                     g.fillRect(0, 0, screenWidth, screenHeight);
                 }
+                renderReceptionist(g);
                 for (PatientData p : patients) {
                     if (p.isInside && p.floor == currentFloor) {
                         renderPatientWithSpriteAndHealth(g, (int) p.posX, (int) p.currentY, "P#" + p.id, p.need, p.hp, p.isFemale, p);
@@ -2098,6 +2456,7 @@ public class Program {
                 }
                 renderOverseer(g, overseerX, overseerY);
                 renderWallOverlay(g);
+                renderPedestrians(g);   // on the pavement in front of the wall
                 if (isNight()) {
                     renderNightLighting(g);
                     if (isOverseerInGuardLight()) renderOverseerLightGlow(g);
@@ -2105,7 +2464,13 @@ public class Program {
             }
             renderInteractionPrompt(g);
             renderHud(g);
+            renderOverlays(g);
             if (hirePanelOpen) renderHirePanel(g);
+        }
+
+        private void renderOverlays(Graphics2D g) {
+            renderTutorial(g);
+            renderNotices(g);
         }
 
         private void renderWallOverlay(Graphics2D g) {
@@ -2187,6 +2552,153 @@ public class Program {
             lighting.dispose();
         }
 
+        // ---------- TUTORIAL: logic ----------
+        private void updateTutorial() {
+            if (!tutorialActive) return;
+            if (day > 1) {                       // the tutorial only covers the first day
+                endTutorial("");
+                return;
+            }
+            long now = System.currentTimeMillis();
+            boolean done;
+            switch (tutorialStep) {
+                case 0: done = tutMoveDist >= 80f; break;
+                case 1: done = tutEnteredWard; break;
+                case 2: done = tutEnteredWard && insideBuilding == null; break;
+                case 3: done = tutDoctorPressed || tutPatient == null || !patients.contains(tutPatient)
+                        || tutPatient.need.equals("HEALTHY"); break;
+                case 4: done = tutTaskPressed[1] || tutTaskPressed[2]; break;
+                case 5: done = tutTaskPressed[3]; break;
+                case 6: done = tutRecallPressed; break;
+                case 7:
+                    if (hirePanelOpen) tutHireSeen = true;
+                    done = tutHireSeen && !hirePanelOpen;
+                    break;
+                case 8: done = tutEnteredStorage; break;
+                default: done = now - tutorialStepStartMillis > 12000L; break;
+            }
+            if (done) advanceTutorial();
+        }
+
+        private void advanceTutorial() {
+            tutorialStep++;
+            tutorialStepStartMillis = System.currentTimeMillis();
+            if (tutorialStep >= TUTORIAL_TITLES.length) {
+                endTutorial("Tutorial complete! Good luck, Overseer.");
+                return;
+            }
+            if (tutorialStep == 3) {             // guarantee someone needs help for this lesson
+                tutPatient = null;
+                for (PatientData p : patients) {
+                    if (!p.leaving && !p.arriving) {
+                        tutPatient = p;
+                        break;
+                    }
+                }
+                if (tutPatient != null) {
+                    tutPatient.need = "SICK";
+                    tutPatient.hp = 100f;
+                    currentEvent = "P#" + tutPatient.id + " has fallen sick!";
+                }
+            }
+        }
+
+        private void endTutorial(String message) {
+            tutorialActive = false;
+            long now = System.currentTimeMillis();
+            for (PatientData p : patients) p.needTimer = now;   // normal sickness timers start fresh
+            if (!message.isEmpty()) {
+                currentEvent = message;
+                addNotice(message, new Color(245, 200, 112));
+            }
+        }
+
+        private void skipTutorial() {
+            if (tutorialActive) endTutorial("Tutorial skipped. Good luck, Overseer!");
+        }
+
+        // ---------- TUTORIAL + NOTICES: drawing ----------
+        private List<String> wrapText(Graphics2D g, String text, int maxWidth, Font font) {
+            g.setFont(font);
+            FontMetrics metrics = g.getFontMetrics();
+            List<String> lines = new ArrayList<>();
+            StringBuilder line = new StringBuilder();
+            for (String word : text.split(" ")) {
+                String candidate = line.length() == 0 ? word : line + " " + word;
+                if (metrics.stringWidth(candidate) > maxWidth && line.length() > 0) {
+                    lines.add(line.toString());
+                    line = new StringBuilder(word);
+                } else {
+                    line = new StringBuilder(candidate);
+                }
+            }
+            if (line.length() > 0) lines.add(line.toString());
+            return lines;
+        }
+
+        private void renderTutorial(Graphics2D g) {
+            if (!tutorialActive || tutorialStep >= TUTORIAL_TITLES.length) return;
+            int total = TUTORIAL_TITLES.length;
+            int w = 390;
+            Font body = new Font("SansSerif", Font.PLAIN, 12);
+            List<String> lines = wrapText(g, TUTORIAL_TEXT[tutorialStep], w - 40, body);
+            int h = 66 + lines.size() * 17 + 26;
+            boolean indoors = insideBuilding != null;
+            int x = indoors ? 20 : WORLD_WIDTH - w - 24;
+            int y = indoors ? WORLD_HEIGHT - h - 16 : 214;
+            g.setColor(new Color(8, 15, 23, 238));
+            g.fillRoundRect(x, y, w, h, 12, 12);
+            g.setColor(new Color(104, 148, 159, 190));
+            g.drawRoundRect(x, y, w, h, 12, 12);
+            g.setColor(new Color(244, 153, 75));
+            g.fillRoundRect(x, y + 6, 4, h - 12, 4, 4);
+
+            g.setFont(new Font("SansSerif", Font.BOLD, 10));
+            g.setColor(new Color(244, 183, 127));
+            g.drawString("TUTORIAL  " + (tutorialStep + 1) + " / " + total, x + 20, y + 22);
+            g.setFont(new Font("SansSerif", Font.BOLD, 16));
+            g.setColor(new Color(244, 244, 236));
+            g.drawString(TUTORIAL_TITLES[tutorialStep], x + 20, y + 44);
+            g.setFont(body);
+            g.setColor(new Color(214, 226, 230));
+            for (int i = 0; i < lines.size(); i++) {
+                g.drawString(lines.get(i), x + 20, y + 68 + i * 17);
+            }
+            g.setFont(new Font("SansSerif", Font.BOLD, 9));
+            g.setColor(new Color(151, 177, 188));
+            g.drawString("T  SKIP TUTORIAL", x + 20, y + h - 11);
+            for (int i = 0; i < total; i++) {
+                g.setColor(i <= tutorialStep ? new Color(244, 153, 75) : new Color(70, 96, 110));
+                g.fillOval(x + w - 20 - (total - i) * 11, y + h - 18, 7, 7);
+            }
+        }
+
+        private void renderNotices(Graphics2D g) {
+            long now = System.currentTimeMillis();
+            Font font = new Font("SansSerif", Font.BOLD, 12);
+            int y = WORLD_HEIGHT - 14;
+            for (int i = notices.size() - 1; i >= 0; i--) {
+                Notice n = notices.get(i);
+                if (now > n.expireMillis) {
+                    notices.remove(n);
+                    continue;
+                }
+                g.setFont(font);
+                int maxWidth = 470;
+                int w = Math.min(maxWidth, g.getFontMetrics().stringWidth(n.text) + 44);
+                int h = 30;
+                int x = WORLD_WIDTH - 24 - w;
+                y -= h + 6;
+                g.setColor(new Color(8, 15, 23, 232));
+                g.fillRoundRect(x, y, w, h, 10, 10);
+                g.setColor(n.color);
+                g.fillRoundRect(x, y, 4, h, 4, 4);
+                g.drawRoundRect(x, y, w, h, 10, 10);
+                g.setColor(new Color(236, 241, 238));
+                drawFittedString(g, n.text, x + 16, y + 20, w - 28, font);
+            }
+        }
+
         // ---------- HIRE MENU: drawing ----------
         private void renderHirePanel(Graphics2D g) {
             int rows = HIRE_ROLES.length;
@@ -2260,7 +2772,9 @@ public class Program {
                 prompt = currentFloor < 3 ? "E  GO UP  ·  FLOOR " + (currentFloor + 1) : "E  TOP FLOOR";
             } else if (playerBounds.intersects(indoorStairsDown)) {
                 prompt = currentFloor > 1 ? "E  GO DOWN  ·  FLOOR " + (currentFloor - 1) : "E  GROUND FLOOR";
-            } else if (playerBounds.intersects(indoorExit)) {
+            } else if (playerBounds.intersects(receptionZone)) {
+                prompt = "E  TALK TO RECEPTIONIST";
+            } else if (currentFloor == 1 && playerBounds.intersects(indoorExit)) {
                 prompt = "E  EXIT SHELTER";
             }
             if (prompt == null) return;
@@ -2557,8 +3071,13 @@ public class Program {
             g.fillRoundRect(x - 5, y - 40, 36, 6, 5, 5);
             g.setColor(hp > 50 ? Color.GREEN : (hp > 25 ? Color.YELLOW : Color.RED));
             g.fillRoundRect(x - 4, y - 39, (int) (34 * (Math.max(0, hp) / 100.0f)), 4, 4, 4);
-            drawEntityLabel(g, label + " [" + need + "]", x + PLAYER_WIDTH / 2, y + 42,
-                    need.equals("HEALTHY") ? new Color(229, 237, 226) : new Color(255, 222, 149));
+            boolean leaving = patient != null && patient.leaving;
+            String status = leaving ? "DISCHARGED" : need;
+            String days = patient == null ? ""
+                    : "  " + Math.max(1, Math.min(QUARANTINE_DAYS, day - patient.arrivalDay + 1)) + "/" + QUARANTINE_DAYS;
+            drawEntityLabel(g, label + " [" + status + "]" + days, x + PLAYER_WIDTH / 2, y + 42,
+                    leaving ? new Color(160, 235, 180)
+                            : need.equals("HEALTHY") ? new Color(229, 237, 226) : new Color(255, 222, 149));
         }
 
         private BufferedImage currentGuardFrame(GuardData guard) {
