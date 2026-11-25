@@ -71,6 +71,8 @@ public class Program {
         private int currencyPoints = 500;
         private int power = 98;
         private int waste = 22;
+        private final int[] wasteBins = new int[5];
+        private int nextWasteBin = 0;
         private int stackedTrashCount = 0;
         private int food = 310;
         private int water = 290;
@@ -165,6 +167,7 @@ public class Program {
         private boolean supplyTruckActive = false;
         private float garbageTruckPosX = -150;
         private boolean garbageTruckActive = false;
+        private boolean garbageTruckCollected = false;
 
         private boolean hireVehicleActive = false;   // an order is pending or the van is still on the road
         private boolean hirePendingSpawn = false;    // van is waiting for a gap in the traffic to join the road
@@ -778,6 +781,7 @@ public class Program {
             boolean roamPicked = false;
             boolean inStorage = false;    // inside building 3 (the storage room), bagging the trash
             boolean carrying = false;     // walking the bagged trash out to the pile
+            int wasteBinTarget = 0;
             long storageStartMillis = 0L;
             PatientData escortTarget = null;   // runaway being chased (taskState 6) / escorted (taskState 7)
             long roamTimer = System.currentTimeMillis();
@@ -815,6 +819,12 @@ public class Program {
         private final Rectangle gateWall = new Rectangle(560, 470, 326, 100);
         private final Rectangle leftWall = new Rectangle(74, 42, 48, 428);
         private final Rectangle rightFence = new Rectangle(1104, 42, 48, 428);
+        private static final Rectangle WASTE_BIN_BARRIER = new Rectangle(890, 389, 212, 8);
+        private static final Rectangle[] WASTE_BIN_COLLIDERS = {
+                new Rectangle(893, 398, 38, 43), new Rectangle(935, 398, 38, 43),
+                new Rectangle(977, 398, 38, 43), new Rectangle(1019, 398, 38, 43),
+                new Rectangle(1061, 398, 38, 43)
+        };
         // ---------- WARD INTERIOR (interior_map.png) ----------
         // The art has 7 small ward rooms down each side wall (each with a doorway on its inner edge), a 6-room medical
         // block in the middle, an UP staircase on the left and a DOWN staircase on the right. Rooms repeat every 101px.
@@ -1509,6 +1519,7 @@ public class Program {
                     player.intersects(leftWall) || player.intersects(rightFence)) {
                 return false;
             }
+            if (player.intersects(WASTE_BIN_BARRIER) || intersectsAny(player, WASTE_BIN_COLLIDERS)) return false;
             for (Rectangle wall : lowerBuildingWalls) {
                 if (player.intersects(wall)) return false;
             }
@@ -1707,9 +1718,9 @@ public class Program {
                         return;
                     }
                     materials -= 10;
-                    waste = Math.max(0, waste - 15);
                     score += 20;
                     nearestGuard.taskState = 2;
+                    nearestGuard.wasteBinTarget = nextWasteBin++ % wasteBins.length;
                     resetNav(nearestGuard.nav);
                     currentEvent = "Guard sent to the storage building to collect the trash!";
                 } else {
@@ -1852,7 +1863,8 @@ public class Program {
                 if (rect.intersects(wall)) return true;
             }
             return rect.intersects(bottomWallLeft) || rect.intersects(bottomWallRight) || rect.intersects(gateWall) ||
-                    rect.intersects(leftWall) || rect.intersects(rightFence);
+                    rect.intersects(leftWall) || rect.intersects(rightFence) || rect.intersects(WASTE_BIN_BARRIER) ||
+                    intersectsAny(rect, WASTE_BIN_COLLIDERS);
         }
 
         private void updateRoadTraffic() {
@@ -1901,6 +1913,14 @@ public class Program {
             }
             if (garbageTruckActive) {
                 garbageTruckPosX += ARRIVAL_TRUCK_SPEED * deltaSeconds;
+                if (!garbageTruckCollected && garbageTruckPosX + getArrivalTruckWidth(garbageTruckSprite) >= 700) {
+                    int collectedWaste = 0;
+                    for (int amount : wasteBins) collectedWaste += amount;
+                    waste = Math.max(0, waste - collectedWaste);
+                    Arrays.fill(wasteBins, 0);
+                    garbageTruckCollected = true;
+                    addNotice("Garbage truck collected the segregated waste.", new Color(132, 207, 228));
+                }
                 if (garbageTruckPosX > WORLD_WIDTH) garbageTruckActive = false;
             }
         }
@@ -2041,6 +2061,18 @@ public class Program {
 
             for (DoctorData d : doctors) {
                 updateDoctor(d);
+            }
+
+            // Send one available guard on a collection run as the stored waste builds up.
+            if (waste >= 15 && guards.stream().noneMatch(g -> g.taskState == 2 || g.taskState == 3 || g.inStorage)) {
+                for (GuardData g : guards) {
+                    if (g.taskState == 0 && !g.inStorage) {
+                        g.taskState = 2;
+                        g.wasteBinTarget = nextWasteBin++ % wasteBins.length;
+                        resetNav(g.nav);
+                        break;
+                    }
+                }
             }
 
             for (GuardData g : guards) {
@@ -2367,6 +2399,15 @@ public class Program {
         // Trash run: walk to the door of building 3, go in and bag the trash, carry it out to the pile
         private static final float TRASH_DOOR_X = 598f, TRASH_DOOR_Y = 348f;
         private static final float TRASH_PILE_X = 320f, TRASH_PILE_Y = 440f;
+        // Keep the row at the far-right edge, clear of the gate opening.
+        private static final float[] WASTE_BIN_X = {895f, 937f, 979f, 1021f, 1063f};
+        private static final float[] WASTE_BIN_Y = {398f, 398f, 398f, 398f, 398f};
+        private static final String[][] WASTE_BIN_LABEL_LINES = {
+                {"GENERAL", "WASTE"}, {"INFECTIOUS", "WASTE"}, {"SHARPS", "WASTE"},
+                {"CHEMICAL", "WASTE"}, {"RADIO-", "ACTIVE", "WASTE"}
+        };
+        private static final float WASTE_BIN_DROP_Y = 442f;
+        private static final Color[] WASTE_BIN_COLORS = {new Color(28, 31, 34), new Color(232, 190, 38), Color.WHITE, new Color(48, 125, 220), new Color(198, 55, 55)};
         private static final long STORAGE_COLLECT_MILLIS = 4500L;
 
         private void updateGuard(GuardData g) {
@@ -2392,8 +2433,8 @@ public class Program {
                 goalX = TRASH_DOOR_X;
                 goalY = TRASH_DOOR_Y;
             } else if (g.taskState == 3) {
-                goalX = TRASH_PILE_X;
-                goalY = TRASH_PILE_Y;
+                goalX = WASTE_BIN_X[g.wasteBinTarget];
+                goalY = WASTE_BIN_DROP_Y;
             } else if (g.taskState == 6 || g.taskState == 7) {
                 PatientData t = g.escortTarget;
                 boolean over = t == null || !patients.contains(t) || t.leaving
@@ -2442,7 +2483,7 @@ public class Program {
             g.currentY = pos[1];
 
             if (g.nav.unreachable && g.taskState != 0) {
-                if (g.carrying) stackedTrashCount++;   // can't reach the pile: dump it where he stands
+                if (g.carrying) { stackedTrashCount++; g.carrying = false; }
                 g.carrying = false;
                 g.escortTarget = null;
                 g.taskState = 0; // unreachable job: drop it instead of pushing against a wall
@@ -2470,8 +2511,10 @@ public class Program {
                 g.taskState = 5;
                 resetNav(g.nav);
                 currentEvent = "Guard went into the storage room to collect the trash.";
-            } else if (g.taskState == 3 && (arrived || (Math.abs(g.posX - TRASH_PILE_X) <= 6f && Math.abs(g.currentY - TRASH_PILE_Y) <= 6f))) {
-                stackedTrashCount++;
+            } else if (g.taskState == 3 && (arrived || (Math.abs(g.posX - WASTE_BIN_X[g.wasteBinTarget]) <= 8f && Math.abs(g.currentY - WASTE_BIN_DROP_Y) <= 8f))) {
+                int collected = Math.min(15, waste);
+                wasteBins[g.wasteBinTarget] = Math.min(100, wasteBins[g.wasteBinTarget] + collected);
+                waste = Math.max(0, waste - collected);
                 g.carrying = false;
                 g.taskState = 0;
                 g.roamPicked = false;
@@ -3097,6 +3140,7 @@ public class Program {
             supplyTruckPosX = -getArrivalTruckWidth(supplyTruckSprite);
             garbageTruckActive = true;
             garbageTruckPosX = -getArrivalTruckWidth(garbageTruckSprite) - 220;
+            garbageTruckCollected = false;
             // Patients who have survived their quarantine are discharged and walk out through the gate
             int discharged = 0;
             for (PatientData p : patients) {
@@ -3130,6 +3174,8 @@ public class Program {
             food -= 35;
             water -= 30;
             waste = Math.min(100, waste + 10);
+            // Split each day's generated waste across the five segregated streams.
+            for (int i = 0; i < 5; i++) wasteBins[i] = Math.min(100, wasteBins[i] + 2);
             score += 150;
             currentEvent = "DAWN (Day " + day + "): " + DAILY_NEW_PATIENTS + " new patients arrived at the gate"
                     + (discharged > 0 ? ", " + discharged + " finished quarantine and are leaving." : ".");
@@ -3206,6 +3252,7 @@ public class Program {
                 if (supplyTruckActive) drawArrivalTruck(g, supplyTruckSprite, supplyTruckPosX, ARRIVAL_TRUCK_Y);
                 if (garbageTruckActive) drawArrivalTruck(g, garbageTruckSprite, garbageTruckPosX, ARRIVAL_TRUCK_Y);
                 if (stackedTrashCount > 0) drawStackedTrash(g, 340, 435, stackedTrashCount);
+                drawWasteBins(g);
 
                 for (PatientData p : patients) {
                     if (!p.isInside) {
@@ -3589,6 +3636,7 @@ public class Program {
                 put(pr, "currencyPoints", currencyPoints);
                 put(pr, "power", power);
                 put(pr, "waste", waste);
+                for (int i = 0; i < wasteBins.length; i++) put(pr, "wasteBin." + i, wasteBins[i]);
                 put(pr, "food", food);
                 put(pr, "water", water);
                 put(pr, "medicine", medicine);
@@ -3700,6 +3748,7 @@ public class Program {
                 currencyPoints = getI(pr, "currencyPoints", currencyPoints);
                 power = getI(pr, "power", power);
                 waste = getI(pr, "waste", waste);
+                for (int i = 0; i < wasteBins.length; i++) wasteBins[i] = Math.max(0, Math.min(100, getI(pr, "wasteBin." + i, 0)));
                 food = getI(pr, "food", food);
                 water = getI(pr, "water", water);
                 medicine = getI(pr, "medicine", medicine);
@@ -4340,6 +4389,73 @@ public class Program {
                     g.fillOval(x + offsetX, y - offsetY, 14, 12);
                 }
             }
+        }
+
+        private void drawWasteBins(Graphics2D g) {
+            Font oldFont = g.getFont();
+            g.setColor(new Color(43, 52, 56));
+            g.fillRoundRect(WASTE_BIN_BARRIER.x, WASTE_BIN_BARRIER.y, WASTE_BIN_BARRIER.width, WASTE_BIN_BARRIER.height, 4, 4);
+            g.setColor(new Color(160, 173, 174));
+            g.fillRect(WASTE_BIN_BARRIER.x + 2, WASTE_BIN_BARRIER.y + 1, WASTE_BIN_BARRIER.width - 4, 2);
+            g.setColor(new Color(65, 76, 78));
+            for (int postX = WASTE_BIN_BARRIER.x + 3; postX < WASTE_BIN_BARRIER.x + WASTE_BIN_BARRIER.width; postX += 42) {
+                g.fillRoundRect(postX, WASTE_BIN_BARRIER.y - 5, 4, 15, 2, 2);
+            }
+            for (int i = 0; i < wasteBins.length; i++) {
+                int x = Math.round(WASTE_BIN_X[i]);
+                int y = Math.round(WASTE_BIN_Y[i]);
+                int barWidth = 44;
+                g.setColor(new Color(20, 25, 30, 210));
+                int barY = y - 39 - (WASTE_BIN_LABEL_LINES[i].length - 2) * 9;
+                g.fillRoundRect(x - 5, barY, barWidth, 9, 5, 5);
+                g.setColor(new Color(95, 105, 108));
+                g.drawRoundRect(x - 5, barY, barWidth, 9, 5, 5);
+                int fillWidth = Math.max(0, Math.min(barWidth - 2, (barWidth - 2) * wasteBins[i] / 100));
+                g.setColor(wasteBins[i] >= 80 ? new Color(226, 88, 71) : new Color(83, 201, 139));
+                g.fillRoundRect(x - 4, barY + 1, fillWidth, 7, 4, 4);
+                g.setColor(new Color(238, 243, 240));
+                g.setFont(new Font("SansSerif", Font.BOLD, 8));
+                String pct = wasteBins[i] + "%";
+                g.drawString(pct, x + 11, barY - 3);
+
+                g.setFont(new Font("SansSerif", Font.BOLD, 7));
+                FontMetrics fm = g.getFontMetrics();
+                int labelY = y - 9 - (WASTE_BIN_LABEL_LINES[i].length - 1) * 9;
+                for (String label : WASTE_BIN_LABEL_LINES[i]) {
+                    int labelX = x + 17 - fm.stringWidth(label) / 2;
+                    g.setColor(new Color(0, 0, 0, 170));
+                    g.drawString(label, labelX - 1, labelY);
+                    g.drawString(label, labelX + 1, labelY);
+                    g.drawString(label, labelX, labelY - 1);
+                    g.drawString(label, labelX, labelY + 1);
+                    g.setColor(Color.WHITE);
+                    g.drawString(label, labelX, labelY);
+                    labelY += 9;
+                }
+
+                Color binColor = WASTE_BIN_COLORS[i];
+                g.setColor(new Color(0, 0, 0, 110));
+                g.fillRoundRect(x + 3, y + 2, 34, 36, 5, 5);
+                g.setPaint(new GradientPaint(x, y, binColor.brighter(), x + 34, y, binColor.darker()));
+                g.fillRoundRect(x, y, 34, 36, 5, 5);
+                g.setPaint(null);
+                g.setColor(new Color(35, 43, 46));
+                g.setStroke(new java.awt.BasicStroke(2f));
+                g.drawRoundRect(x, y, 34, 36, 5, 5);
+                g.setColor(new Color(238, 242, 238, 180));
+                g.fillRoundRect(x + 4, y + 5, 3, 25, 2, 2);
+                g.setColor(new Color(32, 40, 43));
+                g.fillRoundRect(x + 9, y + 8, 18, 5, 2, 2);
+                g.setColor(binColor.darker());
+                g.fillRoundRect(x - 2, y - 4, 38, 7, 3, 3);
+                g.setColor(new Color(45, 52, 54));
+                g.drawRoundRect(x - 2, y - 4, 38, 7, 3, 3);
+                g.setColor(new Color(29, 35, 37));
+                g.fillOval(x + 4, y + 34, 7, 6);
+                g.fillOval(x + 23, y + 34, 7, 6);
+            }
+            g.setFont(oldFont);
+            g.setStroke(new java.awt.BasicStroke(1f));
         }
     }
 }
