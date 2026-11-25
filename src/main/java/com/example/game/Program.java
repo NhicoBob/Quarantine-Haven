@@ -45,11 +45,12 @@ public class Program {
     private static final int ARRIVAL_TRUCK_Y = ROAD_LANE_UPPER_Y + (ROAD_CAR_HEIGHT - ARRIVAL_TRUCK_HEIGHT) / 2;
     private static final float HIRE_DROP_OFF_X = 700f;   // the recruitment van drops the new hire when it passes the gate
     // Pedestrians stroll along the pavement between the wall and the road (much slower than the cars)
-    private static final int PEDESTRIAN_HEIGHT = 44;
+    private static final int PEDESTRIAN_HEIGHT = 62;
     private static final float PEDESTRIAN_SPEED = 26.0f;       // px per second (cars do 132)
     private static final int PEDESTRIAN_LANE_RIGHT_Y = 591;    // feet of someone walking right
     private static final int PEDESTRIAN_LANE_LEFT_Y = 603;     // feet of someone walking left (nearer the road)
     private static final int PEDESTRIAN_MAX = 5;
+    private static final int PEDESTRIAN_EDGE_MARGIN = PEDESTRIAN_HEIGHT / 2 + 4;  // centre is this far past the edge = fully out of sight
     private static final long PEDESTRIAN_FRAME_MILLIS = 120L;
     private static final int PEDESTRIAN_VARIANTS = 6;      // 3 men + 3 women (pedestrian_1..6_walk_side.png)
     private static final float[] PEDESTRIAN_HUES = {0.00f, 0.33f, 0.08f, 0.78f, 0.50f, 0.92f};   // only used if the PNGs are missing
@@ -246,6 +247,7 @@ public class Program {
         private int talkRow = 0;
         private String talkReply = "";
         private long talkLastKeyMillis = 0L;
+        private final java.util.Set<Integer> talkKeysDown = new java.util.HashSet<>();
 
         /** Every resident and staff member gets a unique name from the pool of 50 the first time it is needed. */
         private synchronized String nameOf(NavActor a) {
@@ -319,7 +321,7 @@ public class Program {
             if (pauseMenuOpen || isStorageRoom()) return null;
             double cx = overseerX + PLAYER_WIDTH / 2.0, cy = overseerY + PLAYER_HEIGHT / 2.0;
             NavActor best = null;
-            double bestDist = 38.0;
+            double bestDist = 34.0;
             List<NavActor> all = new ArrayList<>();
             all.addAll(patients);
             all.addAll(doctors);
@@ -347,11 +349,14 @@ public class Program {
                     ? pick("\"Overseer. Everything alright?\"", "\"Good to see you. How can I help?\"")
                     : pick("\"Evening, Overseer. All quiet.\"", "\"Overseer. Anything you need?\"");
             talkLastKeyMillis = System.currentTimeMillis();
+            talkKeysDown.clear();
+            talkKeysDown.add(KeyEvent.VK_E);     // the E that opened this must be released before it can confirm anything
         }
 
         private void closeTalk() {
             talkTarget = null;
             talkReply = "";
+            talkKeysDown.clear();
         }
 
         private List<String> talkOptions() {
@@ -366,8 +371,13 @@ public class Program {
 
         private void talkMenuKey(int keyCode) {
             if (talkTarget == null) return;
+            if (keyCode == KeyEvent.VK_Q) {
+                closeTalk();
+                return;
+            }
+            if (!talkKeysDown.add(keyCode)) return;      // held key / auto-repeat: only the first press counts
             long now = System.currentTimeMillis();
-            if (now - talkLastKeyMillis < 110) return;
+            if (now - talkLastKeyMillis < 80) return;
             talkLastKeyMillis = now;
             int rows = talkOptions().size();
             switch (keyCode) {
@@ -380,6 +390,10 @@ public class Program {
                     talkRow = (talkRow + 1) % rows;
                     break;
                 case KeyEvent.VK_E:
+                    // Mark E as held so the repeat after "Goodbye" can't re-open the dialogue until the key is released
+                    interactionKeyDown = true;
+                    talkSelect();
+                    break;
                 case KeyEvent.VK_ENTER:
                     talkSelect();
                     break;
@@ -476,64 +490,130 @@ public class Program {
             return "You talk about " + l + " for a while. " + nameOf(p) + " smiles and looks a little better.  (+5 HP)";
         }
 
+        // Head portrait for the dialogue box: the top of the character's idle sprite, cropped once and cached
+        private final java.util.Map<BufferedImage, BufferedImage> portraitCache = new java.util.IdentityHashMap<>();
+
+        private BufferedImage portraitFor(NavActor a) {
+            BufferedImage[] frames = a instanceof DoctorData ? doctorIdleDown
+                    : a instanceof GuardData ? guardIdleDown
+                    : ((PatientData) a).isFemale ? femalePatientIdleDown : malePatientIdleDown;
+            if (frames == null || frames.length == 0 || frames[0] == null) return null;
+            BufferedImage frame = frames[0];
+            synchronized (portraitCache) {
+                BufferedImage cached = portraitCache.get(frame);
+                if (cached != null) return cached;
+                int minX = frame.getWidth(), minY = frame.getHeight(), maxX = -1, maxY = -1;
+                for (int yy = 0; yy < frame.getHeight(); yy++) {
+                    for (int xx = 0; xx < frame.getWidth(); xx++) {
+                        if ((frame.getRGB(xx, yy) >>> 24) > 40) {
+                            minX = Math.min(minX, xx); maxX = Math.max(maxX, xx);
+                            minY = Math.min(minY, yy); maxY = Math.max(maxY, yy);
+                        }
+                    }
+                }
+                if (maxX < 0) return null;
+                int h = Math.max(8, (int) Math.round((maxY - minY + 1) * 0.50));   // head and shoulders
+                int w = maxX - minX + 1;
+                int side = Math.max(w, h);                                          // square crop, centred
+                int cx = (minX + maxX) / 2;
+                int x0 = Math.max(0, Math.min(frame.getWidth() - side, cx - side / 2));
+                BufferedImage out = new BufferedImage(side, side, BufferedImage.TYPE_INT_ARGB);
+                Graphics2D og = out.createGraphics();
+                og.drawImage(frame, 0, 0, side, h, x0, minY, x0 + side, minY + h, null);
+                og.dispose();
+                portraitCache.put(frame, out);
+                return out;
+            }
+        }
+
+        /** Genshin-style dialogue: a slim see-through bar at the bottom with the speaker's head on the left. */
         private void renderTalkPanel(Graphics2D g) {
             NavActor t = talkTarget;
             if (t == null) return;
             List<String> opts = talkOptions();
-            int panelW = 780, rowH = 30;
-            int bodyH = 96;
-            int panelH = 64 + bodyH + opts.size() * rowH + 40;
-            int px = (WORLD_WIDTH - panelW) / 2, py = WORLD_HEIGHT - panelH - 18;
-            g.setPaint(new GradientPaint(px, py, new Color(15, 27, 40, 246), px, py + panelH, new Color(20, 36, 49, 244)));
-            g.fillRoundRect(px, py, panelW, panelH, 16, 16);
-            g.setColor(new Color(104, 148, 159, 190));
-            g.drawRoundRect(px, py, panelW, panelH, 16, 16);
-            g.setColor(new Color(244, 153, 75));
-            g.fillRoundRect(px, py, panelW, 4, 8, 8);
+            int boxW = 600, boxH = 112;
+            int bx = (WORLD_WIDTH - boxW) / 2 - 90, by = WORLD_HEIGHT - boxH - 22;
 
-            g.setFont(new Font("SansSerif", Font.BOLD, 20));
-            g.setColor(new Color(244, 244, 236));
+            // bar: dark glass, fading out toward the sides
+            g.setPaint(new java.awt.LinearGradientPaint(bx, 0, bx + boxW, 0, new float[]{0f, 0.5f, 1f},
+                    new Color[]{new Color(10, 16, 26, 70), new Color(10, 16, 26, 160), new Color(10, 16, 26, 70)}));
+            g.fillRoundRect(bx, by, boxW, boxH, 14, 14);
+            g.setColor(new Color(236, 214, 160, 110));
+            g.drawLine(bx + 16, by, bx + boxW - 16, by);
+            g.drawLine(bx + 16, by + boxH, bx + boxW - 16, by + boxH);
+
+            // portrait
+            int pS = 84, pX = bx + 16, pY = by + (boxH - pS) / 2;
+            g.setColor(new Color(10, 16, 26, 150));
+            g.fillRoundRect(pX, pY, pS, pS, 12, 12);
+            BufferedImage face = portraitFor(t);
+            if (face != null) {
+                java.awt.Shape oldClip = g.getClip();
+                g.setClip(new java.awt.geom.RoundRectangle2D.Float(pX, pY, pS, pS, 12, 12));
+                Object oldHint = g.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
+                g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+                g.drawImage(face, pX + 2, pY + 2, pS - 4, pS - 4, null);
+                if (oldHint != null) g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, oldHint);
+                g.setClip(oldClip);
+            } else {
+                g.setFont(new Font("SansSerif", Font.BOLD, 36));
+                g.setColor(new Color(236, 214, 160));
+                String initial = nameOf(t).substring(0, 1);
+                g.drawString(initial, pX + (pS - g.getFontMetrics().stringWidth(initial)) / 2, pY + pS / 2 + 13);
+            }
+            g.setColor(new Color(236, 214, 160, 190));
+            g.drawRoundRect(pX, pY, pS, pS, 12, 12);
+
+            // name + mood
+            int tx = pX + pS + 18;
+            g.setFont(new Font("SansSerif", Font.BOLD, 16));
+            g.setColor(new Color(255, 225, 150));
             String title = nameOf(t);
-            g.drawString(title, px + 24, py + 38);
+            g.drawString(title, tx, by + 26);
             int tw = g.getFontMetrics().stringWidth(title);
-            g.setFont(new Font("SansSerif", Font.PLAIN, 12));
-            g.setColor(new Color(163, 188, 196));
+            g.setFont(new Font("SansSerif", Font.PLAIN, 11));
             String sub = roleOf(t);
-            Color moodColor = new Color(163, 188, 196);
+            Color moodColor = new Color(190, 205, 212);
             if (t instanceof PatientData) {
                 PatientData p = (PatientData) t;
-                sub += "  ·  feeling " + moodOf(p).toLowerCase() + "  ·  HP " + Math.round(Math.max(0, p.hp));
-                moodColor = p.hp > 50 ? new Color(132, 214, 165) : p.hp > 25 ? new Color(245, 200, 112) : new Color(240, 130, 110);
+                sub += "  ·  " + moodOf(p).toLowerCase() + "  ·  HP " + Math.round(Math.max(0, p.hp));
+                moodColor = p.hp > 50 ? new Color(150, 225, 175) : p.hp > 25 ? new Color(250, 210, 125) : new Color(245, 140, 120);
             }
             g.setColor(moodColor);
-            g.drawString(sub, px + 24 + tw + 14, py + 38);
+            g.drawString(sub, tx + tw + 10, by + 26);
 
-            Font bodyFont = new Font("SansSerif", Font.PLAIN, 15);
-            g.setColor(new Color(236, 241, 238));
-            int ly = py + 66;
-            for (String line : wrapText(g, talkReply, panelW - 48, bodyFont)) {
+            // speech (at most 3 lines)
+            Font bodyFont = new Font("SansSerif", Font.PLAIN, 13);
+            int textW = boxW - (pS + 16 + 18) - 20;
+            g.setFont(bodyFont);
+            g.setColor(new Color(244, 244, 238));
+            int ly = by + 34;
+            int lines = 0;
+            for (String line : wrapText(g, talkReply, textW, bodyFont)) {
+                if (lines++ >= 3) break;
                 g.setFont(bodyFont);
-                g.drawString(line, px + 24, ly + 14);
-                ly += 21;
-                if (ly > py + 64 + bodyH) break;
+                g.drawString(line, tx, ly + 14);
+                ly += 19;
             }
-            int oy = py + 64 + bodyH;
+
+            // choices: small pills stacked on the right of the bar
+            int pillW = 236, pillH = 28, gap = 6;
+            int ox = bx + boxW + 18;
+            int oy = by + boxH - (opts.size() * (pillH + gap) - gap);
             for (int i = 0; i < opts.size(); i++) {
                 boolean sel = i == talkRow;
-                int ry = oy + i * rowH;
-                g.setColor(sel ? new Color(36, 58, 70, 235) : new Color(24, 40, 52, 170));
-                g.fillRoundRect(px + 16, ry, panelW - 32, rowH - 4, 8, 8);
-                if (sel) {
-                    g.setColor(new Color(244, 153, 75));
-                    g.drawRoundRect(px + 16, ry, panelW - 32, rowH - 4, 8, 8);
-                }
-                g.setFont(new Font("SansSerif", Font.BOLD, 13));
-                g.setColor(sel ? new Color(255, 240, 214) : new Color(204, 220, 224));
-                g.drawString((sel ? "▶  " : "    ") + opts.get(i), px + 28, ry + 18);
+                int ry = oy + i * (pillH + gap);
+                g.setColor(sel ? new Color(255, 240, 205, 215) : new Color(10, 16, 26, 135));
+                g.fillRoundRect(ox, ry, pillW, pillH, 16, 16);
+                g.setColor(sel ? new Color(255, 255, 255, 230) : new Color(236, 214, 160, 90));
+                g.drawRoundRect(ox, ry, pillW, pillH, 16, 16);
+                g.setFont(new Font("SansSerif", Font.BOLD, 12));
+                g.setColor(sel ? new Color(40, 34, 24) : new Color(226, 232, 232));
+                drawFittedString(g, opts.get(i), ox + 14, ry + 18, pillW - 28, new Font("SansSerif", Font.BOLD, 12));
             }
             g.setFont(new Font("SansSerif", Font.BOLD, 10));
-            g.setColor(new Color(244, 183, 127));
-            g.drawString("W / S  SELECT     E / ENTER  CONFIRM     ESC  LEAVE", px + 24, py + panelH - 12);
+            g.setColor(new Color(236, 214, 160, 210));
+            g.drawString("W/S  SELECT    E  CONFIRM    Q  LEAVE", ox, oy - 8);
         }
 
         // ---------- PAUSE MENU (press BACKSPACE) ----------
@@ -997,6 +1077,13 @@ public class Program {
                 }
             });
             Input.keyboard().onKeyReleased(KeyEvent.VK_E, e -> interactionKeyDown = false);
+            for (int k : new int[]{KeyEvent.VK_E, KeyEvent.VK_ENTER, KeyEvent.VK_W, KeyEvent.VK_S, KeyEvent.VK_UP, KeyEvent.VK_DOWN}) {
+                Input.keyboard().onKeyReleased(k, e -> talkKeysDown.remove(k));
+            }
+            // Q = leave the conversation
+            Input.keyboard().onKeyPressed(KeyEvent.VK_Q, e -> {
+                if (!pauseMenuOpen && talkTarget != null) closeTalk();
+            });
             bindKey(KeyEvent.VK_ENTER, e -> { if (hirePanelOpen) hirePanelKey(KeyEvent.VK_ENTER); });
             // BACKSPACE = pause menu (resume / save / log out)
             Input.keyboard().onKeyPressed(KeyEvent.VK_BACK_SPACE, e -> {
@@ -1290,7 +1377,8 @@ public class Program {
             }
             for (Pedestrian ped : pedestrians) {
                 ped.x += (ped.movingRight ? 1 : -1) * PEDESTRIAN_SPEED * deltaSeconds;
-                if (ped.x < -40 || ped.x > WORLD_WIDTH + 40) pedestrians.remove(ped);
+                // Remove only once fully past the far edge (the render clip hides them until then)
+                if (ped.movingRight ? ped.x > WORLD_WIDTH + PEDESTRIAN_EDGE_MARGIN : ped.x < -PEDESTRIAN_EDGE_MARGIN) pedestrians.remove(ped);
             }
         }
 
@@ -1298,7 +1386,7 @@ public class Program {
             int variant = pedestrianRandom.nextInt(PEDESTRIAN_VARIANTS);
             if (pedestrianFramesRight[variant] == null) return;
             boolean movingRight = pedestrianRandom.nextBoolean();
-            float startX = movingRight ? -30 : WORLD_WIDTH + 30;
+            float startX = movingRight ? -PEDESTRIAN_EDGE_MARGIN : WORLD_WIDTH + PEDESTRIAN_EDGE_MARGIN;
             int groundY = movingRight ? PEDESTRIAN_LANE_RIGHT_Y : PEDESTRIAN_LANE_LEFT_Y;
             for (Pedestrian other : pedestrians) {              // keep walkers in the same direction apart
                 if (other.movingRight == movingRight && Math.abs(other.x - startX) < 90) return;
@@ -1314,20 +1402,26 @@ public class Program {
 
         private void renderPedestrians(Graphics2D g) {
             long nowMillis = System.currentTimeMillis();
-            for (int lane = 0; lane < 2; lane++) {              // farther lane first, so nearer walkers overlap it
-                int laneY = lane == 0 ? PEDESTRIAN_LANE_RIGHT_Y : PEDESTRIAN_LANE_LEFT_Y;
-                for (Pedestrian ped : pedestrians) {
-                    if (ped.groundY != laneY) continue;
-                    BufferedImage[] frames = ped.movingRight ? pedestrianFramesRight[ped.variant] : pedestrianFramesLeft[ped.variant];
-                    if (frames == null || frames.length == 0) continue;
-                    BufferedImage frame = frames[(int) (((nowMillis + ped.animOffsetMillis) / PEDESTRIAN_FRAME_MILLIS) % frames.length)];
-                    int width = Math.max(1, (int) Math.round(PEDESTRIAN_HEIGHT * frame.getWidth() / (double) frame.getHeight()));
-                    int drawX = Math.round(ped.x) - width / 2;
-                    int drawY = ped.groundY - PEDESTRIAN_HEIGHT;
-                    g.setColor(new Color(5, 10, 16, 70));
-                    g.fill(new Ellipse2D.Double(drawX + width * 0.2, ped.groundY - 3, width * 0.6, 6));
-                    g.drawImage(frame, drawX, drawY, width, PEDESTRIAN_HEIGHT, null);
+            Graphics2D clipped = (Graphics2D) g.create();       // keep walkers inside the map, never on the black border
+            clipped.clipRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+            try {
+                for (int lane = 0; lane < 2; lane++) {              // farther lane first, so nearer walkers overlap it
+                    int laneY = lane == 0 ? PEDESTRIAN_LANE_RIGHT_Y : PEDESTRIAN_LANE_LEFT_Y;
+                    for (Pedestrian ped : pedestrians) {
+                        if (ped.groundY != laneY) continue;
+                        BufferedImage[] frames = ped.movingRight ? pedestrianFramesRight[ped.variant] : pedestrianFramesLeft[ped.variant];
+                        if (frames == null || frames.length == 0) continue;
+                        BufferedImage frame = frames[(int) (((nowMillis + ped.animOffsetMillis) / PEDESTRIAN_FRAME_MILLIS) % frames.length)];
+                        int width = Math.max(1, (int) Math.round(PEDESTRIAN_HEIGHT * frame.getWidth() / (double) frame.getHeight()));
+                        int drawX = Math.round(ped.x) - width / 2;
+                        int drawY = ped.groundY - PEDESTRIAN_HEIGHT;
+                        clipped.setColor(new Color(5, 10, 16, 70));
+                        clipped.fill(new Ellipse2D.Double(drawX + width * 0.2, ped.groundY - 3, width * 0.6, 6));
+                        clipped.drawImage(frame, drawX, drawY, width, PEDESTRIAN_HEIGHT, null);
+                    }
                 }
+            } finally {
+                clipped.dispose();
             }
         }
 
