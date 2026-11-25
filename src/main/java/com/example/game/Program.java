@@ -18,6 +18,11 @@ import java.awt.geom.Ellipse2D;
 import java.awt.event.KeyEvent;
 import java.awt.image.BufferedImage;
 import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.util.Properties;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -183,7 +188,7 @@ public class Program {
                 "Uh-oh, a patient fell sick! Doctors head over by themselves, or press 4 to send one right now.",
                 "Patients get hungry, thirsty or sick. Press 1 to hand out rations or 2 for medicine. "
                         + "Your food, water, medicine and materials are in the top bar.",
-                "Waste piles up. Press 3 to send a guard to haul the trash away (costs 10 materials).",
+                "Waste piles up. Press 3 to send a guard to building 3: he collects the trash inside and carries it out (costs 10 materials).",
                 "Press 5 to call every patient back to their own room.",
                 "Press H to open the hire menu. Pick a Doctor or a Guard, or press ESC to close it.",
                 "The 3rd building is the storage room. Walk to its door and press E to manage your stock.",
@@ -197,6 +202,21 @@ public class Program {
         private boolean tutDoctorPressed = false, tutRecallPressed = false;
         private final boolean[] tutTaskPressed = new boolean[6];
         private PatientData tutPatient = null;
+
+        // ---------- PAUSE MENU (press ESC) ----------
+        private static final String[] PAUSE_ITEMS = {"RESUME", "SAVE GAME", "SAVE & LOG OUT", "LOG OUT & ERASE SAVE"};
+        private static final String[] PAUSE_HINTS = {
+                "Back to the shelter.", "Write your progress to the save file.",
+                "Save, then close the game. Your progress is here next time.",
+                "Delete the save and close the game. Next start is a brand new game."};
+        private boolean pauseMenuOpen = false;
+        private int pauseMenuRow = 0;
+        private boolean pauseConfirmErase = false;
+        private long pauseStartMillis = 0L;
+        private long pauseLastKeyMillis = 0L;
+        private String pauseMessage = "";
+        private boolean skipSaveOnExit = false;
+        private long lastAutosaveMillis = System.currentTimeMillis();
 
         // ---------- HIRE MENU (press H) ----------
         private static final String[] HIRE_ROLES = {"Doctor", "Guard"};
@@ -334,6 +354,9 @@ public class Program {
             long lastMoveNanos = 0L;
             long walkStartNanos = 0L;
             boolean roamPicked = false;
+            boolean inStorage = false;    // inside building 3 (the storage room), bagging the trash
+            boolean carrying = false;     // walking the bagged trash out to the pile
+            long storageStartMillis = 0L;
             long roamTimer = System.currentTimeMillis();
             Random rand = new Random();
 
@@ -583,51 +606,59 @@ public class Program {
             guards.add(new GuardData(600, 450));
             for (GuardData guard : guards) guard.flashlightAngle = Math.PI / 2; // start pointing down the walkway
 
+            // Continue from the last save (if any); closing the window also saves
+            boolean continued = loadGame();
+            if (continued) addNotice("Progress loaded - Day " + day + ".", new Color(132, 214, 165));
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                if (!skipSaveOnExit) saveGame();
+            }));
+
             // While a menu (storage or hire) is open, the keys drive that menu instead of walking / giving orders
-            Input.keyboard().onKeyPressed(KeyEvent.VK_W, e -> {
+            bindKey(KeyEvent.VK_W, e -> {
                 if (hirePanelOpen) hirePanelKey(KeyEvent.VK_W);
                 else if (storagePanelOpen) storagePanelKey(KeyEvent.VK_W, e.isShiftDown());
                 else moveOverseer(0, -1);
             });
-            Input.keyboard().onKeyPressed(KeyEvent.VK_S, e -> {
+            bindKey(KeyEvent.VK_S, e -> {
                 if (hirePanelOpen) hirePanelKey(KeyEvent.VK_S);
                 else if (storagePanelOpen) storagePanelKey(KeyEvent.VK_S, e.isShiftDown());
                 else moveOverseer(0, 1);
             });
-            Input.keyboard().onKeyPressed(KeyEvent.VK_A, e -> { if (storagePanelOpen) storagePanelKey(KeyEvent.VK_A, e.isShiftDown()); else moveOverseer(-1, 0); });
-            Input.keyboard().onKeyPressed(KeyEvent.VK_D, e -> { if (storagePanelOpen) storagePanelKey(KeyEvent.VK_D, e.isShiftDown()); else moveOverseer(1, 0); });
-            Input.keyboard().onKeyPressed(KeyEvent.VK_UP, e -> {
+            bindKey(KeyEvent.VK_A, e -> { if (storagePanelOpen) storagePanelKey(KeyEvent.VK_A, e.isShiftDown()); else moveOverseer(-1, 0); });
+            bindKey(KeyEvent.VK_D, e -> { if (storagePanelOpen) storagePanelKey(KeyEvent.VK_D, e.isShiftDown()); else moveOverseer(1, 0); });
+            bindKey(KeyEvent.VK_UP, e -> {
                 if (hirePanelOpen) hirePanelKey(KeyEvent.VK_UP);
                 else if (storagePanelOpen) storagePanelKey(KeyEvent.VK_UP, e.isShiftDown());
             });
-            Input.keyboard().onKeyPressed(KeyEvent.VK_DOWN, e -> {
+            bindKey(KeyEvent.VK_DOWN, e -> {
                 if (hirePanelOpen) hirePanelKey(KeyEvent.VK_DOWN);
                 else if (storagePanelOpen) storagePanelKey(KeyEvent.VK_DOWN, e.isShiftDown());
             });
-            Input.keyboard().onKeyPressed(KeyEvent.VK_LEFT, e -> { if (storagePanelOpen) storagePanelKey(KeyEvent.VK_LEFT, e.isShiftDown()); });
-            Input.keyboard().onKeyPressed(KeyEvent.VK_RIGHT, e -> { if (storagePanelOpen) storagePanelKey(KeyEvent.VK_RIGHT, e.isShiftDown()); });
-            Input.keyboard().onKeyPressed(KeyEvent.VK_R, e -> { if (storagePanelOpen) storagePanelKey(KeyEvent.VK_R, e.isShiftDown()); });
-            Input.keyboard().onKeyPressed(KeyEvent.VK_E, e -> {
+            bindKey(KeyEvent.VK_LEFT, e -> { if (storagePanelOpen) storagePanelKey(KeyEvent.VK_LEFT, e.isShiftDown()); });
+            bindKey(KeyEvent.VK_RIGHT, e -> { if (storagePanelOpen) storagePanelKey(KeyEvent.VK_RIGHT, e.isShiftDown()); });
+            bindKey(KeyEvent.VK_R, e -> { if (storagePanelOpen) storagePanelKey(KeyEvent.VK_R, e.isShiftDown()); });
+            bindKey(KeyEvent.VK_E, e -> {
                 if (!interactionKeyDown) {
                     interactionKeyDown = true;
                     interactWithLocation();
                 }
             });
             Input.keyboard().onKeyReleased(KeyEvent.VK_E, e -> interactionKeyDown = false);
-            Input.keyboard().onKeyPressed(KeyEvent.VK_ENTER, e -> { if (hirePanelOpen) hirePanelKey(KeyEvent.VK_ENTER); });
+            bindKey(KeyEvent.VK_ENTER, e -> { if (hirePanelOpen) hirePanelKey(KeyEvent.VK_ENTER); });
             Input.keyboard().onKeyPressed(KeyEvent.VK_ESCAPE, e -> {
-                if (hirePanelOpen) hirePanelOpen = false;
+                if (pauseMenuOpen) closePauseMenu();
+                else if (hirePanelOpen) hirePanelOpen = false;
                 else if (storagePanelOpen) storagePanelOpen = false;
-                else exitBuilding();
+                else openPauseMenu();
             });
-            Input.keyboard().onKeyPressed(KeyEvent.VK_1, e -> { if (hirePanelOpen) hirePanelKey(KeyEvent.VK_1); else assignTaskToNearestStaff(1); });
-            Input.keyboard().onKeyPressed(KeyEvent.VK_2, e -> { if (hirePanelOpen) hirePanelKey(KeyEvent.VK_2); else assignTaskToNearestStaff(2); });
-            Input.keyboard().onKeyPressed(KeyEvent.VK_3, e -> { if (!hirePanelOpen) assignTaskToNearestStaff(3); });
-            Input.keyboard().onKeyPressed(KeyEvent.VK_4, e -> { if (!hirePanelOpen) dispatchDoctorToNeedyPatient(); });
-            Input.keyboard().onKeyPressed(KeyEvent.VK_5, e -> { if (!hirePanelOpen) orderPatientsBackToRooms(); });
-            Input.keyboard().onKeyPressed(KeyEvent.VK_H, e -> toggleHirePanel());
-            Input.keyboard().onKeyPressed(KeyEvent.VK_T, e -> skipTutorial());
-            Input.keyboard().onKeyPressed(KeyEvent.VK_MINUS, e -> { if (!hirePanelOpen && !storagePanelOpen) skipDaylight(); });
+            bindKey(KeyEvent.VK_1, e -> { if (hirePanelOpen) hirePanelKey(KeyEvent.VK_1); else assignTaskToNearestStaff(1); });
+            bindKey(KeyEvent.VK_2, e -> { if (hirePanelOpen) hirePanelKey(KeyEvent.VK_2); else assignTaskToNearestStaff(2); });
+            bindKey(KeyEvent.VK_3, e -> { if (!hirePanelOpen) assignTaskToNearestStaff(3); });
+            bindKey(KeyEvent.VK_4, e -> { if (!hirePanelOpen) dispatchDoctorToNeedyPatient(); });
+            bindKey(KeyEvent.VK_5, e -> { if (!hirePanelOpen) orderPatientsBackToRooms(); });
+            bindKey(KeyEvent.VK_H, e -> toggleHirePanel());
+            bindKey(KeyEvent.VK_T, e -> skipTutorial());
+            bindKey(KeyEvent.VK_MINUS, e -> { if (!hirePanelOpen && !storagePanelOpen) skipDaylight(); });
             Input.keyboard().onKeyPressed(KeyEvent.VK_F11, e -> {
                 if (!displayModeKeyDown) {
                     displayModeKeyDown = true;
@@ -636,6 +667,123 @@ public class Program {
             });
             Input.keyboard().onKeyReleased(KeyEvent.VK_F11, e -> displayModeKeyDown = false);
             Game.loop().attach(this::updateGameLoop);
+        }
+
+        /** Binds a key; while the pause menu is open every key goes to the menu instead. */
+        private void bindKey(int keyCode, java.util.function.Consumer<KeyEvent> action) {
+            Input.keyboard().onKeyPressed(keyCode, e -> {
+                if (pauseMenuOpen) pauseMenuKey(keyCode);
+                else action.accept(e);
+            });
+        }
+
+        private void openPauseMenu() {
+            pauseMenuOpen = true;
+            pauseMenuRow = 0;
+            pauseConfirmErase = false;
+            pauseMessage = "";
+            pauseStartMillis = System.currentTimeMillis();
+        }
+
+        private void closePauseMenu() {
+            if (!pauseMenuOpen) return;
+            shiftTimers(System.currentTimeMillis() - pauseStartMillis);   // the game was frozen: nothing "happened" meanwhile
+            pauseMenuOpen = false;
+            pauseConfirmErase = false;
+        }
+
+        /** Pushes every running timer forward by the time spent paused. */
+        private void shiftTimers(long ms) {
+            if (ms <= 0) return;
+            lastTickTime += ms;
+            nextRoadTrafficSpawn += ms;
+            nextPedestrianSpawn += ms;
+            tutorialStepStartMillis += ms;
+            lastAutosaveMillis += ms;
+            lastRoadTrafficUpdateNanos = System.nanoTime();
+            lastPedestrianUpdateNanos = System.nanoTime();
+            for (Notice n : notices) n.expireMillis += ms;
+            for (PatientData p : patients) {
+                p.needTimer += ms;
+                p.roamTimer += ms;
+                if (p.nav.holdUntilMillis > 0) p.nav.holdUntilMillis += ms;
+            }
+            for (DoctorData d : doctors) {
+                d.roamTimer += ms;
+                if (d.treatStartMillis != 0L) d.treatStartMillis += ms;
+                if (d.waitStartMillis != 0L) d.waitStartMillis += ms;
+                if (d.nav.holdUntilMillis > 0) d.nav.holdUntilMillis += ms;
+            }
+            for (GuardData g : guards) {
+                g.roamTimer += ms;
+                if (g.inStorage) g.storageStartMillis += ms;
+                if (g.nav.holdUntilMillis > 0) g.nav.holdUntilMillis += ms;
+            }
+        }
+
+        private void pauseMenuKey(int keyCode) {
+            long now = System.currentTimeMillis();
+            if (now - pauseLastKeyMillis < 110) return;
+            pauseLastKeyMillis = now;
+            int rows = PAUSE_ITEMS.length;
+            switch (keyCode) {
+                case KeyEvent.VK_W:
+                case KeyEvent.VK_UP:
+                    pauseMenuRow = (pauseMenuRow - 1 + rows) % rows;
+                    pauseConfirmErase = false;
+                    break;
+                case KeyEvent.VK_S:
+                case KeyEvent.VK_DOWN:
+                    pauseMenuRow = (pauseMenuRow + 1) % rows;
+                    pauseConfirmErase = false;
+                    break;
+                case KeyEvent.VK_E:
+                case KeyEvent.VK_ENTER:
+                    pauseMenuSelect();
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        private void pauseMenuSelect() {
+            switch (pauseMenuRow) {
+                case 0:
+                    closePauseMenu();
+                    break;
+                case 1:
+                    pauseMessage = saveGame() ? "Progress saved." : "Could not write the save file!";
+                    break;
+                case 2:
+                    if (saveGame()) {
+                        exitGame();
+                    } else {
+                        pauseMessage = "Could not write the save file - not closing.";
+                    }
+                    break;
+                default:
+                    if (!pauseConfirmErase) {
+                        pauseConfirmErase = true;
+                        pauseMessage = "Press E / Enter again to erase your progress and quit.";
+                    } else {
+                        skipSaveOnExit = true;
+                        try {
+                            Files.deleteIfExists(savePath());
+                        } catch (Exception ignored) {
+                            // nothing to delete
+                        }
+                        exitGame();
+                    }
+                    break;
+            }
+        }
+
+        private void exitGame() {
+            try {
+                Game.exit();
+            } catch (Throwable t) {
+                System.exit(0);
+            }
         }
 
         private void skipDaylight() {
@@ -924,7 +1072,7 @@ public class Program {
         }
 
         private void moveOverseer(int dirX, int dirY) {
-            if (storagePanelOpen || hirePanelOpen) return;
+            if (storagePanelOpen || hirePanelOpen || pauseMenuOpen) return;
             // Accumulate fractional speed (e.g. 2.5 px) and move by the whole pixels that have built up
             moveRemainderX += dirX * MOVE_SPEED;
             moveRemainderY += dirY * MOVE_SPEED;
@@ -1079,20 +1227,26 @@ public class Program {
                 }
             } else if (taskType == 3) {
                 if (materials >= 10 && waste > 0) {
-                    materials -= 10;
-                    waste = Math.max(0, waste - 15);
-                    score += 20;
                     GuardData nearestGuard = null;
                     double minDst = Double.MAX_VALUE;
                     for (GuardData g : guards) {
+                        if (g.taskState != 0 || g.inStorage) continue;   // only guards that are free
                         double dst = Math.hypot(g.posX - overseerX, g.currentY - overseerY);
                         if (dst < minDst) {
                             minDst = dst;
                             nearestGuard = g;
                         }
                     }
-                    if (nearestGuard != null) nearestGuard.taskState = 2;
-                    currentEvent = "Guard dispatched for trash collection!";
+                    if (nearestGuard == null) {
+                        currentEvent = "Action Failed: No free guard right now.";
+                        return;
+                    }
+                    materials -= 10;
+                    waste = Math.max(0, waste - 15);
+                    score += 20;
+                    nearestGuard.taskState = 2;
+                    resetNav(nearestGuard.nav);
+                    currentEvent = "Guard sent to the storage building to collect the trash!";
                 } else {
                     currentEvent = "Action Failed: Requires 10 Materials or 0 Waste.";
                 }
@@ -1374,6 +1528,11 @@ public class Program {
         }
 
         private void updateGameLoop() {
+            if (pauseMenuOpen) return;      // paused: the whole shelter is frozen
+            if (System.currentTimeMillis() - lastAutosaveMillis > 45_000L) {
+                lastAutosaveMillis = System.currentTimeMillis();
+                saveGame();
+            }
             updateRoadTraffic();
             updatePedestrians();
             updateTutorial();
@@ -1736,17 +1895,35 @@ public class Program {
         }
 
         // ---------- GUARDS ----------
+        // Trash run: walk to the door of building 3, go in and bag the trash, carry it out to the pile
+        private static final float TRASH_DOOR_X = 598f, TRASH_DOOR_Y = 348f;
+        private static final float TRASH_PILE_X = 320f, TRASH_PILE_Y = 440f;
+        private static final long STORAGE_COLLECT_MILLIS = 4500L;
+
         private void updateGuard(GuardData g) {
+            if (g.inStorage) {   // out of sight inside building 3
+                if (System.currentTimeMillis() - g.storageStartMillis >= STORAGE_COLLECT_MILLIS) {
+                    g.inStorage = false;
+                    g.carrying = true;
+                    g.taskState = 3;
+                    g.posX = TRASH_DOOR_X;
+                    g.currentY = TRASH_DOOR_Y;
+                    g.facing = FACE_DOWN;
+                    resetNav(g.nav);
+                    currentEvent = "Guard came out of the storage room with the trash.";
+                }
+                return;
+            }
             ensureNavGrids();
             placeActor(g);
 
             float goalX, goalY;
             if (g.taskState == 2) {
-                goalX = 720;
-                goalY = 430;
+                goalX = TRASH_DOOR_X;
+                goalY = TRASH_DOOR_Y;
             } else if (g.taskState == 3) {
-                goalX = 320;
-                goalY = 440;
+                goalX = TRASH_PILE_X;
+                goalY = TRASH_PILE_Y;
             } else {
                 if (!g.roamPicked || System.currentTimeMillis() - g.roamTimer > 7000) {
                     g.roamPicked = true;
@@ -1767,6 +1944,8 @@ public class Program {
             g.currentY = pos[1];
 
             if (g.nav.unreachable && g.taskState != 0) {
+                if (g.carrying) stackedTrashCount++;   // can't reach the pile: dump it where he stands
+                g.carrying = false;
                 g.taskState = 0; // unreachable job: drop it instead of pushing against a wall
                 g.roamPicked = false;
                 resetNav(g.nav);
@@ -1786,11 +1965,15 @@ public class Program {
             }
 
             // Task hand-offs when the guard has reached the end of its path
-            if (g.taskState == 2 && (arrived || (Math.abs(g.posX - 720) <= 6f && Math.abs(g.currentY - 430) <= 6f))) {
-                g.taskState = 3;
+            if (g.taskState == 2 && (arrived || (Math.abs(g.posX - TRASH_DOOR_X) <= 6f && Math.abs(g.currentY - TRASH_DOOR_Y) <= 6f))) {
+                g.inStorage = true;                    // steps into building 3
+                g.storageStartMillis = System.currentTimeMillis();
+                g.taskState = 5;
                 resetNav(g.nav);
-            } else if (g.taskState == 3 && (arrived || (Math.abs(g.posX - 320) <= 6f && Math.abs(g.currentY - 440) <= 6f))) {
+                currentEvent = "Guard went into the storage room to collect the trash.";
+            } else if (g.taskState == 3 && (arrived || (Math.abs(g.posX - TRASH_PILE_X) <= 6f && Math.abs(g.currentY - TRASH_PILE_Y) <= 6f))) {
                 stackedTrashCount++;
+                g.carrying = false;
                 g.taskState = 0;
                 g.roamPicked = false;
                 resetNav(g.nav);
@@ -2222,6 +2405,15 @@ public class Program {
             g.drawRoundRect(labelX, labelY, labelWidth, 17, 8, 8);
             g.setColor(new Color(247, 245, 236));
             g.drawString(label, labelX + 7, labelY + 12);
+            // a guard on a trash run bags rubbish in here
+            for (GuardData guard : guards) {
+                if (!guard.inStorage) continue;
+                int gx = 520, gy = 468;
+                drawStackedTrash(g, gx + 34, gy + 22, 3);
+                guard.facing = FACE_DOWN;
+                renderGuardian(g, gx, gy, "Guard - bagging trash", guard);
+                break;
+            }
             renderOverseer(g, overseerX, overseerY);
         }
 
@@ -2390,6 +2582,7 @@ public class Program {
                 scene.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
                 scene.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 renderFrame(scene);
+                if (pauseMenuOpen) renderPauseMenu(scene);
             } finally {
                 scene.dispose();
             }
@@ -2452,6 +2645,7 @@ public class Program {
                     }
                 }
                 for (GuardData gData : guards) {
+                    if (gData.inStorage) continue;   // inside building 3
                     renderGuardian(g, (int) gData.posX, (int) gData.currentY, "Guard", gData);
                 }
                 renderOverseer(g, overseerX, overseerY);
@@ -2483,6 +2677,7 @@ public class Program {
             double playerX = overseerX + PLAYER_WIDTH / 2.0;
             double playerY = overseerY + PLAYER_HEIGHT / 2.0;
             for (GuardData guard : guards) {
+                if (guard.inStorage) continue;
                 double dx = Math.cos(guard.flashlightAngle);
                 double dy = Math.sin(guard.flashlightAngle);
                 double originX = guard.posX + PLAYER_WIDTH / 2.0;
@@ -2528,6 +2723,7 @@ public class Program {
             }
 
             for (GuardData guard : guards) {
+                if (guard.inStorage) continue;
                 double dx = Math.cos(guard.flashlightAngle);
                 double dy = Math.sin(guard.flashlightAngle);
                 double originX = guard.posX + PLAYER_WIDTH / 2.0;
@@ -2696,6 +2892,279 @@ public class Program {
                 g.drawRoundRect(x, y, w, h, 10, 10);
                 g.setColor(new Color(236, 241, 238));
                 drawFittedString(g, n.text, x + 16, y + 20, w - 28, font);
+            }
+        }
+
+        // ---------- PAUSE MENU: drawing ----------
+        private void renderPauseMenu(Graphics2D g) {
+            g.setColor(new Color(0, 0, 0, 165));
+            g.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+            int rows = PAUSE_ITEMS.length, rowH = 54;
+            int panelW = 540, panelH = 96 + rows * rowH + 74;
+            int px = (WORLD_WIDTH - panelW) / 2, py = (WORLD_HEIGHT - panelH) / 2;
+            g.setPaint(new GradientPaint(px, py, new Color(15, 27, 40, 252), px, py + panelH, new Color(20, 36, 49, 250)));
+            g.fillRoundRect(px, py, panelW, panelH, 16, 16);
+            g.setColor(new Color(104, 148, 159, 190));
+            g.drawRoundRect(px, py, panelW, panelH, 16, 16);
+            g.setColor(new Color(244, 153, 75));
+            g.fillRoundRect(px, py, panelW, 4, 8, 8);
+            g.setFont(new Font("SansSerif", Font.BOLD, 22));
+            g.setColor(new Color(244, 244, 236));
+            g.drawString("PAUSED", px + 26, py + 46);
+            g.setFont(new Font("SansSerif", Font.PLAIN, 12));
+            g.setColor(new Color(163, 188, 196));
+            g.drawString("Day " + day + "  ·  " + patients.size() + " residents  ·  score " + String.format("%,d", score), px + 26, py + 68);
+
+            for (int i = 0; i < rows; i++) {
+                int ry = py + 86 + i * rowH;
+                boolean selected = i == pauseMenuRow;
+                boolean danger = i == rows - 1;
+                g.setColor(selected ? new Color(36, 58, 70, 235) : new Color(24, 40, 52, 200));
+                g.fillRoundRect(px + 16, ry, panelW - 32, rowH - 8, 10, 10);
+                g.setColor(selected ? (danger ? new Color(225, 112, 83) : new Color(244, 153, 75)) : new Color(70, 96, 110, 160));
+                g.drawRoundRect(px + 16, ry, panelW - 32, rowH - 8, 10, 10);
+                g.setFont(new Font("SansSerif", Font.BOLD, 15));
+                g.setColor(danger ? new Color(240, 150, 125) : new Color(236, 241, 238));
+                g.drawString(PAUSE_ITEMS[i], px + 34, ry + 20);
+                g.setFont(new Font("SansSerif", Font.PLAIN, 11));
+                g.setColor(new Color(151, 177, 188));
+                g.drawString(PAUSE_HINTS[i], px + 34, ry + 36);
+            }
+            int fy = py + 86 + rows * rowH + 6;
+            g.setFont(new Font("SansSerif", Font.BOLD, 10));
+            g.setColor(new Color(244, 183, 127));
+            g.drawString("W / S  SELECT     E / ENTER  CONFIRM     ESC  RESUME", px + 26, fy + 14);
+            if (!pauseMessage.isEmpty()) {
+                g.setFont(new Font("SansSerif", Font.BOLD, 12));
+                g.setColor(new Color(245, 200, 112));
+                g.drawString(pauseMessage, px + 26, fy + 38);
+            }
+        }
+
+        // ---------- SAVE / LOAD ----------
+        private static Path savePath() {
+            return Paths.get(System.getProperty("user.home"), ".quarantine_haven", "savegame.properties");
+        }
+
+        private static void put(Properties pr, String key, Object value) {
+            pr.setProperty(key, String.valueOf(value));
+        }
+
+        private static int getI(Properties pr, String key, int def) {
+            try { return Integer.parseInt(pr.getProperty(key, String.valueOf(def)).trim()); } catch (Exception e) { return def; }
+        }
+
+        private static float getF(Properties pr, String key, float def) {
+            try { return Float.parseFloat(pr.getProperty(key, String.valueOf(def)).trim()); } catch (Exception e) { return def; }
+        }
+
+        private static boolean getB(Properties pr, String key, boolean def) {
+            String v = pr.getProperty(key);
+            return v == null ? def : Boolean.parseBoolean(v.trim());
+        }
+
+        /** Writes the whole shelter to ~/.quarantine_haven/savegame.properties. Returns false if that failed. */
+        private synchronized boolean saveGame() {
+            try {
+                Properties pr = new Properties();
+                put(pr, "version", 1);
+                put(pr, "day", day);
+                put(pr, "score", score);
+                put(pr, "currencyPoints", currencyPoints);
+                put(pr, "power", power);
+                put(pr, "waste", waste);
+                put(pr, "food", food);
+                put(pr, "water", water);
+                put(pr, "medicine", medicine);
+                put(pr, "materials", materials);
+                put(pr, "secondsRemaining", secondsRemaining);
+                put(pr, "overseerX", overseerX);
+                put(pr, "overseerY", overseerY);
+                put(pr, "insideBuilding", insideBuilding == null ? "" : insideBuilding);
+                put(pr, "currentFloor", currentFloor);
+                put(pr, "nextPatientId", nextPatientId);
+                put(pr, "dischargedCount", dischargedCount);
+                put(pr, "tutorialActive", tutorialActive);
+                put(pr, "tutorialStep", tutorialStep);
+                int pendingTrash = stackedTrashCount;
+                for (GuardData gd : guards) if (gd.carrying || gd.inStorage) pendingTrash++;   // trash already bagged
+                put(pr, "stackedTrashCount", pendingTrash);
+                for (int i = 0; i < 4; i++) {
+                    put(pr, "stock." + i, storedStock[i]);
+                    put(pr, "autoRestock." + i, autoRestock[i]);
+                    put(pr, "restockBelow." + i, restockBelow[i]);
+                }
+                if (hireVehicleActive && !hireDelivered) put(pr, "hirePending", hiredRoleName);   // paid for, not yet arrived
+
+                int n = 0;
+                for (PatientData pd : patients) {
+                    String k = "patient." + n + ".";
+                    put(pr, k + "id", pd.id);
+                    put(pr, k + "x", pd.posX);
+                    put(pr, k + "y", pd.currentY);
+                    put(pr, k + "inside", pd.isInside);
+                    put(pr, k + "floor", pd.floor);
+                    put(pr, k + "need", pd.need);
+                    put(pr, k + "hp", pd.hp);
+                    put(pr, k + "arrivalDay", pd.arrivalDay);
+                    put(pr, k + "arriving", pd.arriving);
+                    put(pr, k + "leaving", pd.leaving);
+                    put(pr, k + "exiting", pd.exiting);
+                    put(pr, k + "ordered", pd.orderedToRoom);
+                    put(pr, k + "roomIndex", pd.roomIndex);
+                    put(pr, k + "roomX", pd.roomX);
+                    put(pr, k + "roomY", pd.roomY);
+                    put(pr, k + "roomFloor", pd.roomFloor);
+                    put(pr, k + "destInside", pd.destInside);
+                    put(pr, k + "destFloor", pd.destFloor);
+                    put(pr, k + "tx", pd.targetX);
+                    put(pr, k + "ty", pd.targetY);
+                    n++;
+                }
+                put(pr, "patientCount", n);
+                n = 0;
+                for (DoctorData dd : doctors) {
+                    String k = "doctor." + n + ".";
+                    put(pr, k + "x", dd.posX);
+                    put(pr, k + "y", dd.currentY);
+                    put(pr, k + "inside", dd.isInside);
+                    put(pr, k + "floor", dd.floor);
+                    n++;
+                }
+                put(pr, "doctorCount", n);
+                n = 0;
+                for (GuardData gd : guards) {
+                    String k = "guard." + n + ".";
+                    put(pr, k + "x", (gd.inStorage || gd.carrying) ? TRASH_DOOR_X : gd.posX);
+                    put(pr, k + "y", (gd.inStorage || gd.carrying) ? TRASH_DOOR_Y : gd.currentY);
+                    put(pr, k + "angle", gd.flashlightAngle);
+                    n++;
+                }
+                put(pr, "guardCount", n);
+
+                Path file = savePath();
+                Files.createDirectories(file.getParent());
+                Path tmp = file.resolveSibling("savegame.tmp");
+                try (java.io.OutputStream out = Files.newOutputStream(tmp)) {
+                    pr.store(out, "Quarantine Haven save");
+                }
+                try {
+                    Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                } catch (Exception atomicNotSupported) {
+                    Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
+                }
+                return true;
+            } catch (Exception ex) {
+                System.err.println("Could not save the game: " + ex);
+                return false;
+            }
+        }
+
+        /** Restores the saved shelter, if there is one. Returns true when a save was loaded. */
+        private synchronized boolean loadGame() {
+            Path file = savePath();
+            if (!Files.isRegularFile(file)) return false;
+            try {
+                Properties pr = new Properties();
+                try (InputStream in = Files.newInputStream(file)) {
+                    pr.load(in);
+                }
+                if (getI(pr, "version", 0) != 1) return false;
+
+                day = getI(pr, "day", day);
+                score = getI(pr, "score", score);
+                currencyPoints = getI(pr, "currencyPoints", currencyPoints);
+                power = getI(pr, "power", power);
+                waste = getI(pr, "waste", waste);
+                food = getI(pr, "food", food);
+                water = getI(pr, "water", water);
+                medicine = getI(pr, "medicine", medicine);
+                materials = getI(pr, "materials", materials);
+                secondsRemaining = Math.max(1, Math.min(DAY_DURATION_SECONDS, getI(pr, "secondsRemaining", secondsRemaining)));
+                stackedTrashCount = getI(pr, "stackedTrashCount", 0);
+                nextPatientId = getI(pr, "nextPatientId", nextPatientId);
+                dischargedCount = getI(pr, "dischargedCount", 0);
+                for (int i = 0; i < 4; i++) {
+                    storedStock[i] = getI(pr, "stock." + i, storedStock[i]);
+                    autoRestock[i] = getB(pr, "autoRestock." + i, autoRestock[i]);
+                    restockBelow[i] = getI(pr, "restockBelow." + i, restockBelow[i]);
+                }
+
+                patients.clear();
+                int count = getI(pr, "patientCount", 0);
+                for (int i = 0; i < count; i++) {
+                    String k = "patient." + i + ".";
+                    PatientData pd = new PatientData(getI(pr, k + "id", i + 1), getF(pr, k + "x", 400f), getF(pr, k + "y", 400f),
+                            getB(pr, k + "inside", false), getI(pr, k + "floor", 1));
+                    pd.need = pr.getProperty(k + "need", "HEALTHY");
+                    pd.hp = getF(pr, k + "hp", 100f);
+                    pd.arrivalDay = getI(pr, k + "arrivalDay", 1);
+                    pd.arriving = getB(pr, k + "arriving", false);
+                    pd.leaving = getB(pr, k + "leaving", false);
+                    pd.exiting = getB(pr, k + "exiting", false);
+                    pd.orderedToRoom = getB(pr, k + "ordered", false);
+                    pd.roomIndex = getI(pr, k + "roomIndex", -1);
+                    pd.roomX = getF(pr, k + "roomX", 0f);
+                    pd.roomY = getF(pr, k + "roomY", 0f);
+                    pd.roomFloor = getI(pr, k + "roomFloor", 1);
+                    pd.destInside = getB(pr, k + "destInside", pd.isInside);
+                    pd.destFloor = getI(pr, k + "destFloor", pd.floor);
+                    pd.targetX = getF(pr, k + "tx", pd.posX);
+                    pd.targetY = getF(pr, k + "ty", pd.currentY);
+                    patients.add(pd);
+                }
+                doctors.clear();
+                count = getI(pr, "doctorCount", 0);
+                for (int i = 0; i < count; i++) {
+                    String k = "doctor." + i + ".";
+                    doctors.add(new DoctorData(getF(pr, k + "x", 300f), getF(pr, k + "y", 430f),
+                            getB(pr, k + "inside", false), getI(pr, k + "floor", 1)));
+                }
+                guards.clear();
+                count = getI(pr, "guardCount", 0);
+                for (int i = 0; i < count; i++) {
+                    String k = "guard." + i + ".";
+                    GuardData gd = new GuardData(getF(pr, k + "x", 600f), getF(pr, k + "y", 450f));
+                    gd.flashlightAngle = getF(pr, k + "angle", (float) (Math.PI / 2));
+                    guards.add(gd);
+                }
+
+                String building = pr.getProperty("insideBuilding", "");
+                insideBuilding = building.isEmpty() ? null : building;
+                currentFloor = getI(pr, "currentFloor", 1);
+                overseerX = getI(pr, "overseerX", overseerX);
+                overseerY = getI(pr, "overseerY", overseerY);
+
+                String pendingHire = pr.getProperty("hirePending", "");
+                if (!pendingHire.isEmpty()) {          // a paid-for hire that hadn't arrived yet: send the van again
+                    hiredRoleName = pendingHire;
+                    hireDelivered = false;
+                    hireVehicleActive = true;
+                    hirePendingSpawn = true;
+                }
+
+                // tutorial: pick up where it was (or stay off)
+                tutorialActive = getB(pr, "tutorialActive", false) && day == 1;
+                tutorialStep = getI(pr, "tutorialStep", 0);
+                tutPatient = null;
+                if (tutorialActive) {
+                    tutEnteredWard = tutorialStep >= 2;
+                    tutMoveDist = tutorialStep >= 1 ? 200f : 0f;
+                    if (tutorialStep == 3) {
+                        for (PatientData pd : patients) if (!pd.need.equals("HEALTHY")) tutPatient = pd;
+                    }
+                    tutorialStepStartMillis = System.currentTimeMillis();
+                } else {
+                    long now = System.currentTimeMillis();
+                    for (PatientData pd : patients) pd.needTimer = now;
+                }
+
+                lastTickTime = System.currentTimeMillis();
+                currentEvent = "Welcome back, Overseer. Day " + day + " - your progress was loaded.";
+                return true;
+            } catch (Exception ex) {
+                System.err.println("Could not load the save game (starting fresh): " + ex);
+                return false;
             }
         }
 
@@ -3105,6 +3574,7 @@ public class Program {
             } else {
                 renderCharacterBadge(g, x, y, Color.BLUE, label, "GRD");
             }
+            if (guard != null && guard.carrying) drawStackedTrash(g, x + 12, y - 8, 1);   // bag in his hands
             drawEntityLabel(g, label, x + PLAYER_WIDTH / 2, y + 42, new Color(231, 235, 249));
         }
 
