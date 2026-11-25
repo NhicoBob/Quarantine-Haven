@@ -45,11 +45,12 @@ public class Program {
     private static final int ARRIVAL_TRUCK_Y = ROAD_LANE_UPPER_Y + (ROAD_CAR_HEIGHT - ARRIVAL_TRUCK_HEIGHT) / 2;
     private static final float HIRE_DROP_OFF_X = 700f;   // the recruitment van drops the new hire when it passes the gate
     // Pedestrians stroll along the pavement between the wall and the road (much slower than the cars)
-    private static final int PEDESTRIAN_HEIGHT = 44;
+    private static final int PEDESTRIAN_HEIGHT = 62;
     private static final float PEDESTRIAN_SPEED = 26.0f;       // px per second (cars do 132)
     private static final int PEDESTRIAN_LANE_RIGHT_Y = 591;    // feet of someone walking right
     private static final int PEDESTRIAN_LANE_LEFT_Y = 603;     // feet of someone walking left (nearer the road)
     private static final int PEDESTRIAN_MAX = 5;
+    private static final int PEDESTRIAN_EDGE_MARGIN = PEDESTRIAN_HEIGHT / 2 + 4;  // centre is this far past the edge = fully out of sight
     private static final long PEDESTRIAN_FRAME_MILLIS = 120L;
     private static final int PEDESTRIAN_VARIANTS = 6;      // 3 men + 3 women (pedestrian_1..6_walk_side.png)
     private static final float[] PEDESTRIAN_HUES = {0.00f, 0.33f, 0.08f, 0.78f, 0.50f, 0.92f};   // only used if the PNGs are missing
@@ -243,6 +244,7 @@ public class Program {
                 "hot tea", "chess", "dancing", "photography", "baking"};
         private final Random npcRandom = new Random();
         private NavActor talkTarget = null;
+        private long talkClosedMillis = 0L;
         private int talkRow = 0;
         private String talkReply = "";
         private long talkLastKeyMillis = 0L;
@@ -352,6 +354,7 @@ public class Program {
         private void closeTalk() {
             talkTarget = null;
             talkReply = "";
+            talkClosedMillis = System.currentTimeMillis();   // stops the same key press from re-opening the chat
         }
 
         private List<String> talkOptions() {
@@ -380,6 +383,12 @@ public class Program {
                     talkRow = (talkRow + 1) % rows;
                     break;
                 case KeyEvent.VK_E:
+                    // One E press = one selection. Held/repeating E (including the press that opened the chat) is ignored
+                    // until the key is released, otherwise "Goodbye" closes and the repeat re-opens the dialogue.
+                    if (interactionKeyDown) break;
+                    interactionKeyDown = true;
+                    talkSelect();
+                    break;
                 case KeyEvent.VK_ENTER:
                     talkSelect();
                     break;
@@ -1290,7 +1299,8 @@ public class Program {
             }
             for (Pedestrian ped : pedestrians) {
                 ped.x += (ped.movingRight ? 1 : -1) * PEDESTRIAN_SPEED * deltaSeconds;
-                if (ped.x < -40 || ped.x > WORLD_WIDTH + 40) pedestrians.remove(ped);
+                // Remove only once fully past the far edge (the render clip hides them until then)
+                if (ped.movingRight ? ped.x > WORLD_WIDTH + PEDESTRIAN_EDGE_MARGIN : ped.x < -PEDESTRIAN_EDGE_MARGIN) pedestrians.remove(ped);
             }
         }
 
@@ -1298,7 +1308,7 @@ public class Program {
             int variant = pedestrianRandom.nextInt(PEDESTRIAN_VARIANTS);
             if (pedestrianFramesRight[variant] == null) return;
             boolean movingRight = pedestrianRandom.nextBoolean();
-            float startX = movingRight ? -30 : WORLD_WIDTH + 30;
+            float startX = movingRight ? -PEDESTRIAN_EDGE_MARGIN : WORLD_WIDTH + PEDESTRIAN_EDGE_MARGIN;
             int groundY = movingRight ? PEDESTRIAN_LANE_RIGHT_Y : PEDESTRIAN_LANE_LEFT_Y;
             for (Pedestrian other : pedestrians) {              // keep walkers in the same direction apart
                 if (other.movingRight == movingRight && Math.abs(other.x - startX) < 90) return;
@@ -1314,6 +1324,9 @@ public class Program {
 
         private void renderPedestrians(Graphics2D g) {
             long nowMillis = System.currentTimeMillis();
+            Graphics2D clipped = (Graphics2D) g.create();       // keep walkers inside the map, never on the black border
+            clipped.clipRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+            try {
             for (int lane = 0; lane < 2; lane++) {              // farther lane first, so nearer walkers overlap it
                 int laneY = lane == 0 ? PEDESTRIAN_LANE_RIGHT_Y : PEDESTRIAN_LANE_LEFT_Y;
                 for (Pedestrian ped : pedestrians) {
@@ -1324,10 +1337,13 @@ public class Program {
                     int width = Math.max(1, (int) Math.round(PEDESTRIAN_HEIGHT * frame.getWidth() / (double) frame.getHeight()));
                     int drawX = Math.round(ped.x) - width / 2;
                     int drawY = ped.groundY - PEDESTRIAN_HEIGHT;
-                    g.setColor(new Color(5, 10, 16, 70));
-                    g.fill(new Ellipse2D.Double(drawX + width * 0.2, ped.groundY - 3, width * 0.6, 6));
-                    g.drawImage(frame, drawX, drawY, width, PEDESTRIAN_HEIGHT, null);
+                    clipped.setColor(new Color(5, 10, 16, 70));
+                    clipped.fill(new Ellipse2D.Double(drawX + width * 0.2, ped.groundY - 3, width * 0.6, 6));
+                    clipped.drawImage(frame, drawX, drawY, width, PEDESTRIAN_HEIGHT, null);
                 }
+            }
+            } finally {
+                clipped.dispose();
             }
         }
 
@@ -1501,7 +1517,7 @@ public class Program {
             }
             NavActor chatPartner = findTalkTarget();
             if (chatPartner != null) {           // someone is right here: talk to them
-                openTalk(chatPartner);
+                if (System.currentTimeMillis() - talkClosedMillis > 500L) openTalk(chatPartner);
                 return;
             }
             if (isStorageRoom()) {
