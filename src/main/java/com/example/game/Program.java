@@ -244,6 +244,7 @@ public class Program {
                 "hot tea", "chess", "dancing", "photography", "baking"};
         private final Random npcRandom = new Random();
         private NavActor talkTarget = null;
+        private long talkClosedMillis = 0L;
         private int talkRow = 0;
         private String talkReply = "";
         private long talkLastKeyMillis = 0L;
@@ -256,6 +257,7 @@ public class Program {
                 for (PatientData x : patients) used.add(x.name);
                 for (DoctorData x : doctors) used.add(x.name);
                 for (GuardData x : guards) used.add(x.name);
+                for (ReceptionistData x : receptionists) used.add(x.name);
                 List<String> free = new ArrayList<>();
                 for (String n : NPC_NAMES) if (!used.contains(n)) free.add(n);
                 if (!free.isEmpty()) {
@@ -285,7 +287,8 @@ public class Program {
         }
 
         private String roleOf(NavActor a) {
-            return a instanceof PatientData ? "Resident" : a instanceof DoctorData ? "Doctor" : "Guard";
+            return a instanceof PatientData ? "Resident" : a instanceof DoctorData ? "Doctor"
+                    : a instanceof ReceptionistData ? "Receptionist" : "Guard";
         }
 
         private String moodOf(PatientData p) {
@@ -313,7 +316,7 @@ public class Program {
             if (a instanceof GuardData && ((GuardData) a).inStorage) return false;
             if (insideBuilding == null) return !a.isInside;
             if (isStorageRoom()) return false;
-            return a.isInside && a.floor == currentFloor;
+            return a.isInside && a.floor == currentFloor && a.building == currentBuildingIndex();
         }
 
         /** The closest resident / staff member within talking distance of the overseer, or null. */
@@ -326,6 +329,7 @@ public class Program {
             all.addAll(patients);
             all.addAll(doctors);
             all.addAll(guards);
+            all.addAll(receptionists);
             for (NavActor a : all) {
                 if (!talkableNow(a)) continue;
                 double d = Math.hypot(a.posX + PLAYER_WIDTH / 2.0 - cx, a.currentY + PLAYER_HEIGHT / 2.0 - cy);
@@ -343,7 +347,9 @@ public class Program {
             if (a instanceof PatientData) ensurePatientTraits((PatientData) a);
             nameOf(a);
             likesOf(a);
-            talkReply = a instanceof PatientData
+            talkReply = a instanceof ReceptionistData
+                    ? "\"Welcome to Ward " + (a.building + 1) + ", Overseer. Floor " + a.floor + " desk - how can I help?\""
+                    : a instanceof PatientData
                     ? pick("\"Oh, hello, Overseer.\"", "\"Hi! Did you need something?\"", "\"Hey. Nice to see a friendly face.\"")
                     : a instanceof DoctorData
                     ? pick("\"Overseer. Everything alright?\"", "\"Good to see you. How can I help?\"")
@@ -357,12 +363,14 @@ public class Program {
             talkTarget = null;
             talkReply = "";
             talkKeysDown.clear();
+            talkClosedMillis = System.currentTimeMillis();   // stops the same key press from re-opening the chat
         }
 
         private List<String> talkOptions() {
             List<String> o = new ArrayList<>();
             o.add("How are you feeling?");
             o.add("What do you like?");
+            if (talkTarget instanceof ReceptionistData) o.add("Ward report");
             o.add("Chat about " + likesOf(talkTarget));
             if (talkTarget instanceof PatientData && ((PatientData) talkTarget).escaping) o.add("Ask them to go back inside");
             o.add("Goodbye");
@@ -390,12 +398,8 @@ public class Program {
                     talkRow = (talkRow + 1) % rows;
                     break;
                 case KeyEvent.VK_E:
-                    // Mark E as held so the repeat after "Goodbye" can't re-open the dialogue until the key is released
-                    interactionKeyDown = true;
-                    talkSelect();
-                    break;
                 case KeyEvent.VK_ENTER:
-                    talkSelect();
+                    talkSelect();          // one press = one selection (held keys are ignored above)
                     break;
                 default:
                     break;
@@ -410,6 +414,8 @@ public class Program {
                 closeTalk();
             } else if (choice.equals("How are you feeling?")) {
                 talkReply = feelingLine(t);
+            } else if (choice.equals("Ward report")) {
+                talkReply = wardReportLine(t);
             } else if (choice.equals("What do you like?")) {
                 talkReply = likesLine(t);
             } else if (choice.startsWith("Chat about")) {
@@ -434,6 +440,10 @@ public class Program {
         }
 
         private String feelingLine(NavActor a) {
+            if (a instanceof ReceptionistData) {
+                return pick("\"Doing well! It's a calm desk today, thanks for asking.\"",
+                        "\"Busy with paperwork, but I like keeping the ward organised.\"");
+            }
             if (a instanceof DoctorData) {
                 int needCare = 0;
                 for (PatientData p : patients) if (!p.need.equals("HEALTHY")) needCare++;
@@ -495,6 +505,7 @@ public class Program {
 
         private BufferedImage portraitFor(NavActor a) {
             BufferedImage[] frames = a instanceof DoctorData ? doctorIdleDown
+                    : a instanceof ReceptionistData ? (receptionistFrames != null ? receptionistFrames : doctorIdleDown)
                     : a instanceof GuardData ? guardIdleDown
                     : ((PatientData) a).isFemale ? femalePatientIdleDown : malePatientIdleDown;
             if (frames == null || frames.length == 0 || frames[0] == null) return null;
@@ -679,6 +690,7 @@ public class Program {
             boolean isInside = false;
             int floor = 1;
             NavAgent nav = new NavAgent();
+            int building = 0;            // which patient ward (0 = Ward 1, 1 = Ward 2) they belong to / are currently inside
             String name = "";            // see nameOf(): handed out lazily from NPC_NAMES
             String likes = "";           // see likesOf()
             long chatCooldownUntil = 0L; // patients enjoy a chat only now and then
@@ -699,6 +711,10 @@ public class Program {
         private static class NavGrid {
             int cols, rows;
             boolean[][] walkable;
+        }
+
+        /** The receptionist at the desk on one floor of one ward (6 in total: 2 wards x 3 floors). */
+        private static class ReceptionistData extends NavActor {
         }
 
         private static class DoctorData extends NavActor {
@@ -723,6 +739,7 @@ public class Program {
             }
         }
         private List<DoctorData> doctors = new CopyOnWriteArrayList<>();
+        private final List<ReceptionistData> receptionists = new CopyOnWriteArrayList<>();
 
         private static class PatientData extends NavActor {
             int id;
@@ -1031,6 +1048,17 @@ public class Program {
                 patients.add(new PatientData(nextPatientId++, startSpots[i][0], startSpots[i][1], false, 1));
             }
 
+            for (int b = 0; b < 2; b++) {
+                for (int f = 1; f <= 3; f++) {
+                    ReceptionistData rec = new ReceptionistData();
+                    rec.building = b;
+                    rec.floor = f;
+                    rec.isInside = true;
+                    rec.posX = RECEPTION_X;
+                    rec.currentY = RECEPTION_Y;
+                    receptionists.add(rec);
+                }
+            }
             doctors.add(new DoctorData(300, 430, false, 1)); // was inside a wall
             doctors.add(new DoctorData(400, 450, true, 2)); // lobby (old spot was inside a room block)
 
@@ -1447,6 +1475,35 @@ public class Program {
             return result;
         }
 
+        private final java.util.Map<BufferedImage, BufferedImage> sittingCache = new java.util.IdentityHashMap<>();
+
+        /** The frame with everything below the waist removed, so she looks like she is seated behind the desk. */
+        private BufferedImage sittingFrame(BufferedImage frame) {
+            synchronized (sittingCache) {
+                BufferedImage cached = sittingCache.get(frame);
+                if (cached != null) return cached;
+                int minY = frame.getHeight(), maxY = -1;
+                for (int yy = 0; yy < frame.getHeight(); yy++) {
+                    for (int xx = 0; xx < frame.getWidth(); xx++) {
+                        if ((frame.getRGB(xx, yy) >>> 24) > 40) {
+                            minY = Math.min(minY, yy);
+                            maxY = Math.max(maxY, yy);
+                            break;
+                        }
+                    }
+                }
+                BufferedImage out = new BufferedImage(frame.getWidth(), frame.getHeight(), BufferedImage.TYPE_INT_ARGB);
+                if (maxY >= 0) {
+                    int cut = minY + (int) Math.round((maxY - minY + 1) * 0.74);   // down to about the waist
+                    Graphics2D og = out.createGraphics();
+                    og.drawImage(frame, 0, 0, frame.getWidth(), cut, 0, 0, frame.getWidth(), cut, null);
+                    og.dispose();
+                }
+                sittingCache.put(frame, out);
+                return out;
+            }
+        }
+
         private void renderReceptionist(Graphics2D g) {
             BufferedImage frame = null;
             if (receptionistFrames != null && receptionistFrames.length > 0) {
@@ -1454,29 +1511,33 @@ public class Program {
             }
             int x = (int) RECEPTION_X, y = (int) RECEPTION_Y;
             if (frame != null) {
-                drawAnimatedFrame(g, frame, x, y, 56);
+                drawAnimatedFrame(g, sittingFrame(frame), x, y, 56);
             } else if (doctorSheet != null) {
                 drawCharacterSprite(g, doctorSheet, x, y, 56);
             } else {
                 renderCharacterBadge(g, x, y, new Color(110, 170, 230), "Receptionist", "REC");
             }
-            drawEntityLabel(g, "Receptionist F" + currentFloor, x + PLAYER_WIDTH / 2, y + 62, new Color(200, 225, 250));
+            ReceptionistData rec = receptionistFor(Math.max(0, currentBuildingIndex()), currentFloor);
+            drawEntityLabel(g, "Receptionist " + nameOf(rec), x + PLAYER_WIDTH / 2, y + 62, new Color(200, 225, 250));
         }
 
-        /** Talking to the receptionist gives a quick report on the floor you are standing on. */
-        private void receptionistReport() {
-            int here = 0, needCare = 0;
+        /** Floor-by-floor summary of the ward the overseer is in (spoken by the receptionist). */
+        private String wardReportLine(NavActor a) {
+            int b = a.building, f = a.floor;
+            int here = 0, care = 0, total = 0;
             for (PatientData p : patients) {
-                if (p.isInside && p.floor == currentFloor && !p.arriving) {
+                if (p.arriving || p.building != b || p.roomIndex < 0) continue;
+                total++;
+                if (p.isInside && p.floor == f) {
                     here++;
-                    if (!p.need.equals("HEALTHY")) needCare++;
+                    if (!p.need.equals("HEALTHY")) care++;
                 }
             }
-            String msg = "Receptionist: Floor " + currentFloor + " has " + here + " patient" + (here == 1 ? "" : "s")
-                    + (needCare > 0 ? ", " + needCare + " need care." : ", all doing fine.")
-                    + "  " + patients.size() + " residents in total.";
-            currentEvent = msg;
-            addNotice(msg, new Color(132, 207, 228));
+            return "\"Ward " + (b + 1) + ", floor " + f + ": " + here + " resident" + (here == 1 ? "" : "s") + " here"
+                    + (care > 0 ? ", " + care + " need care." : ", all doing fine.")
+                    + " The ward has " + total + " of " + WARD_CAPACITY + " beds taken"
+                    + (b == 0 && total >= WARD_CAPACITY ? " - Ward 1 is full, new arrivals go to Ward 2." : ".")
+                    + " " + patients.size() + " residents in total.\"";
         }
 
         private BufferedImage[] loadFrames(String path, boolean mirrored) {
@@ -1595,7 +1656,7 @@ public class Program {
             }
             NavActor chatPartner = findTalkTarget();
             if (chatPartner != null) {           // someone is right here: talk to them
-                openTalk(chatPartner);
+                if (System.currentTimeMillis() - talkClosedMillis > 500L) openTalk(chatPartner);
                 return;
             }
             if (isStorageRoom()) {
@@ -1622,7 +1683,9 @@ public class Program {
                     return;
                 }
                 if (playerBounds.intersects(receptionZone)) {
-                    receptionistReport();
+                    if (System.currentTimeMillis() - talkClosedMillis > 500L) {
+                        openTalk(receptionistFor(Math.max(0, currentBuildingIndex()), currentFloor));
+                    }
                 } else if (currentFloor == 1 && playerBounds.intersects(indoorExit)) {
                     exitBuilding();
                 } else if (currentFloor == 1) {
@@ -2280,6 +2343,23 @@ public class Program {
             return nav.pathIndex >= nav.path.size();
         }
 
+        /** Which ward the overseer is in: 0 = Ward 1, 1 = Ward 2, -1 = outdoors / storage room. */
+        private int currentBuildingIndex() {
+            if (insideBuilding == null || isStorageRoom()) return -1;
+            return buildingNames[1].equals(insideBuilding) ? 1 : 0;
+        }
+
+        private float doorXOf(int building) {
+            return building == 1 ? door2X : door1X;
+        }
+
+        private ReceptionistData receptionistFor(int building, int floor) {
+            for (ReceptionistData r : receptionists) {
+                if (r.building == building && r.floor == floor) return r;
+            }
+            return receptionists.get(0);
+        }
+
         private float nearestDoorX(float x) {
             float[] doors = {door1X, door2X}; // the 3rd building is the storage room: NPCs never enter it
             float best = doors[0];
@@ -2315,7 +2395,7 @@ public class Program {
                     portal = up ? PORTAL_STAIRS_UP : PORTAL_STAIRS_DOWN;
                 }
             } else if (!a.isInside) {
-                gx = nearestDoorX(a.posX);
+                gx = doorXOf(a.building);
                 gy = door1Y;
                 portal = PORTAL_DOOR_IN;
             } else if (a.floor != 1) {
@@ -2354,7 +2434,7 @@ public class Program {
                     return false;
                 case PORTAL_EXIT:
                     a.isInside = false;
-                    a.posX = randomDoorX();
+                    a.posX = doorXOf(a.building) + navRandom.nextInt(21) - 10;
                     a.currentY = door1Y + 30;
                     resetNav(nav);
                     return false;
@@ -2538,29 +2618,45 @@ public class Program {
             return true;
         }
 
-        private boolean isRoomTaken(int floor, int room, PatientData except) {
+        private boolean isRoomTaken(int building, int floor, int room, PatientData except) {
             for (PatientData other : patients) {
-                if (other != except && other.roomIndex == room && other.roomFloor == floor) return true;
+                if (other != except && other.roomIndex == room && other.roomFloor == floor && other.building == building) return true;
             }
             return false;
         }
 
-        /** Gives a patient their own ward room: fills floor 1 first, then 2 and 3 (shares beds only if all are taken). */
+        // Ward 1 is filled first; once it holds this many residents, newcomers go to Ward 2.
+        private static final int WARD_CAPACITY = 10;
+
+        private int wardOccupants(int building, PatientData except) {
+            int n = 0;
+            for (PatientData other : patients) {
+                if (other != except && other.roomIndex >= 0 && other.building == building) n++;
+            }
+            return n;
+        }
+
+        /** Gives a patient a bed: Ward 1 until it is full (WARD_CAPACITY), then Ward 2. Floors fill 1, 2, 3. */
         private void assignRoom(PatientData p) {
             if (p.roomIndex >= 0) return;
-            for (int floor = 1; floor <= 3; floor++) {
-                for (int room : WARD_ROOM_ORDER) {
-                    if (!isRoomTaken(floor, room, p)) {
-                        setPatientRoom(p, floor, room);
-                        return;
+            for (int building = 0; building < 2; building++) {
+                if (wardOccupants(building, p) >= WARD_CAPACITY) continue;
+                for (int floor = 1; floor <= 3; floor++) {
+                    for (int room : WARD_ROOM_ORDER) {
+                        if (!isRoomTaken(building, floor, room, p)) {
+                            setPatientRoom(p, building, floor, room);
+                            return;
+                        }
                     }
                 }
             }
+            // both wards are over capacity: share beds
             int shared = (p.id - 1) % (3 * WARD_ROOM_ORDER.length);
-            setPatientRoom(p, shared / WARD_ROOM_ORDER.length + 1, WARD_ROOM_ORDER[shared % WARD_ROOM_ORDER.length]);
+            setPatientRoom(p, (p.id - 1) % 2, shared / WARD_ROOM_ORDER.length + 1, WARD_ROOM_ORDER[shared % WARD_ROOM_ORDER.length]);
         }
 
-        private void setPatientRoom(PatientData p, int floor, int room) {
+        private void setPatientRoom(PatientData p, int building, int floor, int room) {
+            p.building = building;
             p.roomFloor = floor;
             p.roomIndex = room;
             float[] spot = roomStandSpot(room);
@@ -2758,7 +2854,14 @@ public class Program {
                     // Go to the patient's ward room and wait beside the bed for them to get there
                     assignRoom(tp);
                     float[] spot = roomDoctorSpot(tp.roomIndex);
-                    boolean arrived = travelTo(d, true, tp.roomFloor, spot[0], spot[1], 1.5f);
+                    boolean arrived;
+                    if (d.building != tp.building) {            // the patient lives in the other ward
+                        if (d.isInside) travelTo(d, false, 1, 580f, 420f, 1.5f);   // leave through the exit first
+                        else d.building = tp.building;
+                        arrived = false;
+                    } else {
+                        arrived = travelTo(d, true, tp.roomFloor, spot[0], spot[1], 1.5f);
+                    }
                     boolean patientInRoom = tp.isInside && tp.floor == tp.roomFloor
                             && Math.hypot(tp.posX - tp.roomX, tp.currentY - tp.roomY) <= 24f;
                     if (arrived) {
@@ -3182,13 +3285,14 @@ public class Program {
                     g.fillRect(0, 0, screenWidth, screenHeight);
                 }
                 renderReceptionist(g);
+                int wardIdx = currentBuildingIndex();
                 for (PatientData p : patients) {
-                    if (p.isInside && p.floor == currentFloor) {
+                    if (p.isInside && p.floor == currentFloor && p.building == wardIdx) {
                         renderPatientWithSpriteAndHealth(g, (int) p.posX, (int) p.currentY, nameOf(p), p.need, p.hp, p.isFemale, p);
                     }
                 }
                 for (DoctorData doc : doctors) {
-                    if (doc.isInside && doc.floor == currentFloor) {
+                    if (doc.isInside && doc.floor == currentFloor && doc.building == wardIdx) {
                         renderDoctor(g, (int) doc.posX, (int) doc.currentY, "Dr. " + nameOf(doc), doc);
                     }
                 }
@@ -3631,6 +3735,7 @@ public class Program {
                     put(pr, k + "roomX", pd.roomX);
                     put(pr, k + "roomY", pd.roomY);
                     put(pr, k + "roomFloor", pd.roomFloor);
+                    put(pr, k + "building", pd.building);
                     put(pr, k + "destInside", pd.destInside);
                     put(pr, k + "destFloor", pd.destFloor);
                     put(pr, k + "tx", pd.targetX);
@@ -3649,11 +3754,13 @@ public class Program {
                     put(pr, k + "y", dd.currentY);
                     put(pr, k + "inside", dd.isInside);
                     put(pr, k + "floor", dd.floor);
+                    put(pr, k + "building", dd.building);
                     put(pr, k + "name", nameOf(dd));
                     put(pr, k + "likes", likesOf(dd));
                     n++;
                 }
                 put(pr, "doctorCount", n);
+                for (int i = 0; i < receptionists.size(); i++) put(pr, "receptionist." + i + ".name", nameOf(receptionists.get(i)));
                 n = 0;
                 for (GuardData gd : guards) {
                     String k = "guard." + n + ".";
@@ -3731,6 +3838,7 @@ public class Program {
                     pd.roomX = getF(pr, k + "roomX", 0f);
                     pd.roomY = getF(pr, k + "roomY", 0f);
                     pd.roomFloor = getI(pr, k + "roomFloor", 1);
+                    pd.building = getI(pr, k + "building", 0);
                     pd.destInside = getB(pr, k + "destInside", pd.isInside);
                     pd.destFloor = getI(pr, k + "destFloor", pd.floor);
                     pd.targetX = getF(pr, k + "tx", pd.posX);
@@ -3747,9 +3855,14 @@ public class Program {
                     String k = "doctor." + i + ".";
                     DoctorData dd = new DoctorData(getF(pr, k + "x", 300f), getF(pr, k + "y", 430f),
                             getB(pr, k + "inside", false), getI(pr, k + "floor", 1));
+                    dd.building = getI(pr, k + "building", 0);
                     dd.name = pr.getProperty(k + "name", "");
                     dd.likes = pr.getProperty(k + "likes", "");
                     doctors.add(dd);
+                }
+                for (int i = 0; i < receptionists.size(); i++) {
+                    String rn = pr.getProperty("receptionist." + i + ".name", "");
+                    if (!rn.isEmpty()) receptionists.get(i).name = rn;
                 }
                 guards.clear();
                 count = getI(pr, "guardCount", 0);
