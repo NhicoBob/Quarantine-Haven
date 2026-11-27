@@ -46,7 +46,7 @@ public class Program {
     private static final int ARRIVAL_TRUCK_Y = ROAD_LANE_UPPER_Y + (ROAD_CAR_HEIGHT - ARRIVAL_TRUCK_HEIGHT) / 2;
     private static final float HIRE_DROP_OFF_X = 700f;   // the recruitment van drops the new hire when it passes the gate
     // Pedestrians stroll along the pavement between the wall and the road (much slower than the cars)
-    private static final int PEDESTRIAN_HEIGHT = 44;
+    private static final int PEDESTRIAN_HEIGHT = 62;
     private static final float PEDESTRIAN_SPEED = 26.0f;       // px per second (cars do 132)
     private static final int PEDESTRIAN_LANE_RIGHT_Y = 591;    // feet of someone walking right
     private static final int PEDESTRIAN_LANE_LEFT_Y = 603;     // feet of someone walking left (nearer the road)
@@ -216,7 +216,7 @@ public class Program {
                         + "Walk to the exit at the bottom of the ground floor and press E to go back outside.",
                 "Uh-oh, a patient fell sick! Doctors head over by themselves. Press 4 to call a doctor to wherever you stand - she checks on anyone needing care near you and any critical patient. Press 4 again to send her back.",
                 "Patients get hungry, thirsty or sick. Press 1 to hand out rations or 2 for medicine. "
-                        + "Your food, water, medicine and materials are in the top bar.",
+                        + "Your stock levels are NOT shown out here - walk into the storage room (3rd building) to check food, water, medicine and materials.",
                 "Waste piles up. Press 3 to send a guard to building 3: he collects the trash inside and carries it out (costs 10 materials).",
                 "Press 5 to call every patient back to their own room.",
                 "Press H to open the hire menu. Pick a Doctor or a Guard, or press ESC to close it.",
@@ -630,11 +630,11 @@ public class Program {
         }
 
         // ---------- PAUSE MENU (press BACKSPACE) ----------
-        private static final String[] PAUSE_ITEMS = {"RESUME", "SAVE GAME", "SAVE & LOG OUT", "LOG OUT & ERASE SAVE"};
+        private static final String[] PAUSE_ITEMS = {"RESUME", "SAVE GAME", "SAVE & MAIN MENU"};
         private static final String[] PAUSE_HINTS = {
                 "Back to the shelter.", "Write your progress to the save file.",
-                "Save, then close the game. Your progress is here next time.",
-                "Delete the save and close the game. Next start is a brand new game."};
+                "Save, then go back to the main menu.",
+        };
         private boolean pauseMenuOpen = false;
         private int pauseMenuRow = 0;
         private boolean pauseConfirmErase = false;
@@ -1263,26 +1263,36 @@ public class Program {
                     break;
                 case 2:
                     if (saveGame()) {
-                        exitGame();
+                        goToMainMenu();
                     } else {
-                        pauseMessage = "Could not write the save file - not closing.";
+                        pauseMessage = "Could not write the save file - not leaving.";
                     }
                     break;
                 default:
-                    if (!pauseConfirmErase) {
-                        pauseConfirmErase = true;
-                        pauseMessage = "Press E / Enter again to erase your progress and quit.";
-                    } else {
-                        skipSaveOnExit = true;
-                        try {
-                            Files.deleteIfExists(savePath());
-                        } catch (Exception ignored) {
-                            // nothing to delete
-                        }
-                        exitGame();
-                    }
                     break;
             }
+        }
+
+        /** Back to the title screen (MyGameScreen). The shelter stays frozen behind the pause menu until it is shown again. */
+        private void goToMainMenu() {
+            try {
+                for (Object screen : Game.screens().getAll()) {
+                    if (screen instanceof MyGameScreen) {
+                        Game.screens().display(((MyGameScreen) screen).getName());
+                        return;
+                    }
+                }
+            } catch (Throwable t) {
+                // fall through
+            }
+            pauseMessage = "Main menu screen not found.";
+        }
+
+        /** Coming back from the main menu: leave the pause menu so the shelter carries on where it stopped. */
+        @Override
+        public void prepare() {
+            super.prepare();
+            if (pauseMenuOpen) closePauseMenu();
         }
 
         private void exitGame() {
@@ -1379,8 +1389,8 @@ public class Program {
         private static final float TOOL_REACH = 62f;
         private static final long TOOL_COOLDOWN_MILLIS = 380L;
         private static final long PUDDLE_DRY_MILLIS = 150_000L;
-        // tool stands out in the yard (feet position): walk up and press E to pick the tool up / put it back
-        private static final float[][] TOOL_STANDS = {{470f, 412f}, {540f, 412f}};
+        // tool stands out in the yard, right beside the small buildings (feet position): walk up and press E to pick the tool up / put it back
+        private static final float[][] TOOL_STANDS = {{322f, 442f}, {368f, 442f}};
         private static final int RAIN_DROPS = 150;
         private static final Color[] LEAF_COLORS = {new Color(214, 120, 40), new Color(190, 60, 40),
                 new Color(222, 176, 52), new Color(150, 98, 46), new Color(120, 150, 52)};
@@ -4840,7 +4850,7 @@ public class Program {
                 renderInteriorHud(g);
                 return;
             }
-            int panelX = 24, panelY = 18, panelWidth = 1152, panelHeight = 140;
+            int panelX = 24, panelY = 18, panelWidth = 1152, panelHeight = 112;
             g.setPaint(new GradientPaint(panelX, panelY, new Color(15, 27, 40, 246),
                     panelX, panelY + panelHeight, new Color(20, 36, 49, 238)));
             g.fillRoundRect(panelX, panelY, panelWidth, panelHeight, 14, 14);
@@ -4867,23 +4877,16 @@ public class Program {
             g.setColor(new Color(209, 232, 222));
             drawFittedString(g, location, locationX + 26, panelY + 39,
                     locationWidth - 36, new Font("SansSerif", Font.BOLD, 12));
-            // weather + tool pills
-            String wx = rainIntensity > 0.3f ? "RAINING" : weather == WEATHER_RAIN ? "CLOUDING OVER" : "CLEAR";
-            g.setColor(new Color(27, 53, 62, 230));
-            g.fillRoundRect(panelX + 290, panelY + 19, 330, 30, 10, 10);
-            g.setColor(weather == WEATHER_RAIN ? new Color(105, 186, 225) : new Color(245, 200, 112));
-            g.fillOval(panelX + 301, panelY + 30, 8, 8);
-            g.setColor(new Color(209, 232, 222));
-            drawFittedString(g, wx + "  ·  " + puddles.size() + " PUDDLES  ·  " + leafPiles.size() + " LEAF PILES",
-                    panelX + 316, panelY + 39, 296, new Font("SansSerif", Font.BOLD, 11));
-            g.setColor(new Color(27, 53, 62, 230));
-            g.fillRoundRect(panelX + 630, panelY + 19, 270, 30, 10, 10);
-            g.setColor(overseerTool == TOOL_NONE ? new Color(120, 140, 150) : new Color(244, 153, 75));
-            g.fillOval(panelX + 641, panelY + 30, 8, 8);
-            g.setColor(new Color(209, 232, 222));
-            drawFittedString(g, overseerTool == TOOL_NONE ? "HANDS EMPTY  ·  MOP / BROOM IN THE YARD"
-                            : "HOLDING " + TOOL_NAMES[overseerTool] + "  ·  F  USE",
-                    panelX + 656, panelY + 39, 236, new Font("SansSerif", Font.BOLD, 11));
+            // only a small "holding" pill - weather and stock levels are no longer on the screen
+            if (overseerTool != TOOL_NONE) {
+                g.setColor(new Color(27, 53, 62, 230));
+                g.fillRoundRect(panelX + 290, panelY + 19, 270, 30, 10, 10);
+                g.setColor(new Color(244, 153, 75));
+                g.fillOval(panelX + 301, panelY + 30, 8, 8);
+                g.setColor(new Color(209, 232, 222));
+                drawFittedString(g, "HOLDING " + TOOL_NAMES[overseerTool] + "  ·  F  USE",
+                        panelX + 316, panelY + 39, 236, new Font("SansSerif", Font.BOLD, 11));
+            }
             g.setColor(new Color(92, 119, 132, 170));
             g.drawLine(panelX + 18, panelY + 57, panelX + panelWidth - 18, panelY + 57);
             String[] metricLabels = {"DAY", "RESIDENTS", "NEXT TRUCK", "SCORE", "SUPPLY POINTS"};
@@ -4912,51 +4915,30 @@ public class Program {
                 g.setColor(metricColors[i]);
                 g.drawString(metricValues[i], x + 16, panelY + 99);
             }
-            g.setColor(new Color(92, 119, 132, 150));
-            g.drawLine(panelX + 18, panelY + 108, panelX + panelWidth - 18, panelY + 108);
-            drawResourceCounter(g, panelX + 22, panelY + 130, "FOOD", food, new Color(109, 198, 146), storedStock[0], 143);
-            drawResourceCounter(g, panelX + 165, panelY + 130, "WATER", water, new Color(105, 186, 225), storedStock[1], 143);
-            drawResourceCounter(g, panelX + 308, panelY + 130, "MEDICINE", medicine, new Color(226, 138, 128), storedStock[2], 167);
-            drawResourceCounter(g, panelX + 475, panelY + 130, "MATERIALS", materials, new Color(215, 184, 126), storedStock[3], 250);
-            int wasteX = panelX + 731;
-            g.setFont(new Font("SansSerif", Font.BOLD, 10));
-            g.setColor(new Color(166, 188, 194));
-            g.drawString("WASTE", wasteX, panelY + 129);
-            g.setFont(new Font("SansSerif", Font.BOLD, 12));
-            g.setColor(new Color(231, 237, 230));
-            g.drawString(waste + "%  ·  " + stackedTrashCount + " PILES", wasteX + 47, panelY + 130);
-            int wasteBarX = wasteX + 190;
-            int wasteBarWidth = panelX + panelWidth - 20 - wasteBarX;
-            g.setColor(new Color(6, 13, 20, 220));
-            g.fillRoundRect(wasteBarX, panelY + 121, wasteBarWidth, 11, 8, 8);
-            g.setPaint(new GradientPaint(wasteBarX, panelY + 121, new Color(79, 185, 141),
-                    wasteBarX + wasteBarWidth, panelY + 121, new Color(225, 112, 83)));
-            g.fillRoundRect(wasteBarX, panelY + 121,
-                    Math.max(0, Math.min(wasteBarWidth, wasteBarWidth * waste / 100)), 11, 8, 8);
             g.setColor(new Color(8, 15, 23, 224));
-            g.fillRoundRect(24, 169, 620, 30, 9, 9);
+            g.fillRoundRect(24, 141, 620, 30, 9, 9);
             g.setColor(new Color(244, 153, 75));
-            g.fillRoundRect(24, 169, 3, 30, 3, 3);
+            g.fillRoundRect(24, 141, 3, 30, 3, 3);
             g.setFont(new Font("SansSerif", Font.BOLD, 10));
             g.setColor(new Color(244, 183, 127));
-            g.drawString("LATEST", 39, 188);
-            drawFittedString(g, currentEvent, 89, 188, 540,
+            g.drawString("LATEST", 39, 160);
+            drawFittedString(g, currentEvent, 89, 160, 540,
                     new Font("SansSerif", Font.PLAIN, 10));
             g.setColor(new Color(8, 15, 23, 224));
-            g.fillRoundRect(654, 169, 522, 30, 9, 9);
+            g.fillRoundRect(654, 141, 522, 30, 9, 9);
             g.setColor(new Color(107, 177, 196));
-            g.fillRoundRect(654, 169, 3, 30, 3, 3);
+            g.fillRoundRect(654, 141, 3, 30, 3, 3);
             g.setFont(new Font("SansSerif", Font.BOLD, 10));
             g.setColor(new Color(151, 177, 188));
-            g.drawString("PLAY", 669, 188);
+            g.drawString("PLAY", 669, 160);
             String controlSummary = "WASD MOVE · E USE · F TOOL · 1–3 TASKS · 4 CALL DOC · 5 RECALL · H HIRE · BKSP PAUSE";
-            drawFittedString(g, controlSummary, 700, 188, 385,
+            drawFittedString(g, controlSummary, 700, 160, 385,
                     new Font("SansSerif", Font.PLAIN, 9));
             String displayMode = Game.config().graphics().getDisplayMode() == DisplayMode.FULLSCREEN
                     ? "F11 FULLSCREEN" : "F11 WINDOWED";
             g.setFont(new Font("SansSerif", Font.BOLD, 9));
             g.setColor(new Color(151, 177, 188));
-            g.drawString(displayMode, 1090, 188);
+            g.drawString(displayMode, 1090, 160);
         }
 
         private void renderInteriorHud(Graphics2D g) {
@@ -4992,13 +4974,15 @@ public class Program {
                 g.setColor(colors[i]);
                 g.drawString(values[i], x, panelY + 62);
             }
-            drawResourceCounter(g, panelX + 536, panelY + 84, "FOOD", food, new Color(109, 198, 146), storedStock[0], 131);
-            drawResourceCounter(g, panelX + 667, panelY + 84, "WATER", water, new Color(105, 186, 225), storedStock[1], 139);
-            drawResourceCounter(g, panelX + 806, panelY + 84, "MEDICINE", medicine, new Color(226, 138, 128), storedStock[2], 172);
-            drawResourceCounter(g, panelX + 978, panelY + 84, "MATERIALS", materials, new Color(215, 184, 126), storedStock[3], 200);
-            g.setFont(new Font("SansSerif", Font.BOLD, 9));
-            g.setColor(new Color(166, 188, 194));
-            g.drawString("WASTE " + waste + "%  ·  " + stackedTrashCount + " PILES", panelX + 536, panelY + 61);
+            if (isStorageRoom()) {   // the stock board lives in the storage room only
+                drawResourceCounter(g, panelX + 536, panelY + 84, "FOOD", food, new Color(109, 198, 146), storedStock[0], 131);
+                drawResourceCounter(g, panelX + 667, panelY + 84, "WATER", water, new Color(105, 186, 225), storedStock[1], 139);
+                drawResourceCounter(g, panelX + 806, panelY + 84, "MEDICINE", medicine, new Color(226, 138, 128), storedStock[2], 172);
+                drawResourceCounter(g, panelX + 978, panelY + 84, "MATERIALS", materials, new Color(215, 184, 126), storedStock[3], 200);
+                g.setFont(new Font("SansSerif", Font.BOLD, 9));
+                g.setColor(new Color(166, 188, 194));
+                g.drawString("WASTE " + waste + "%  ·  " + stackedTrashCount + " PILES", panelX + 536, panelY + 61);
+            }
             if (isStorageRoom()) {
                 g.setColor(new Color(8, 15, 23, 224));
                 g.fillRoundRect(panelX, panelY + panelHeight + 8, 620, 28, 9, 9);
