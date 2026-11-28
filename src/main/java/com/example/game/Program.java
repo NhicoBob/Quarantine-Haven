@@ -46,7 +46,7 @@ public class Program {
     private static final int ARRIVAL_TRUCK_Y = ROAD_LANE_UPPER_Y + (ROAD_CAR_HEIGHT - ARRIVAL_TRUCK_HEIGHT) / 2;
     private static final float HIRE_DROP_OFF_X = 700f;   // the recruitment van drops the new hire when it passes the gate
     // Pedestrians stroll along the pavement between the wall and the road (much slower than the cars)
-    private static final int PEDESTRIAN_HEIGHT = 44;
+    private static final int PEDESTRIAN_HEIGHT = 62;
     private static final float PEDESTRIAN_SPEED = 26.0f;       // px per second (cars do 132)
     private static final int PEDESTRIAN_LANE_RIGHT_Y = 591;    // feet of someone walking right
     private static final int PEDESTRIAN_LANE_LEFT_Y = 603;     // feet of someone walking left (nearer the road)
@@ -195,7 +195,10 @@ public class Program {
         private int costWater() { return costFood(); }
         private int costMedicine() { return 2 + Math.round(4 * difficulty()); }             // 2 -> 6
         private int costIntensiveMedicine() { return 4 + Math.round(5 * difficulty()); }    // 4 -> 9
-        private int sicknessBaseMillis() { return Math.round(lerpF(110000f, 55000f, difficulty())); }
+        private int sicknessBaseMillis() {
+            float grace = day <= 2 ? 1.25f : 1f;          // a gentle first two days
+            return Math.round(lerpF(110000f, 55000f, difficulty()) * grace);
+        }
         private int newPatientsToday() { return Math.min(4, 2 + (day - 1) / 8); }           // 2, then 3 from day 9, 4 from day 17
         /** What the truck brings for one item: scaled to how many people there are and what they will use, with a surplus that shrinks. */
         private int dailyDelivery(int item, int residents) {
@@ -357,7 +360,7 @@ public class Program {
             if (a instanceof GuardData && ((GuardData) a).inStorage) return false;
             if (insideBuilding == null) return !a.isInside;
             if (isStorageRoom()) return false;
-            return a.isInside && a.floor == currentFloor;
+            return a.isInside && a.floor == currentFloor && a.ward == currentWard();
         }
 
         /** The closest resident / staff member within talking distance of the overseer, or null. */
@@ -385,6 +388,7 @@ public class Program {
         private void openTalk(NavActor a) {
             talkTarget = a;
             talkRow = 0;
+            if (a instanceof PatientData) { dayChats++; checkDailyGoals(); }
             if (a instanceof PatientData) ensurePatientTraits((PatientData) a);
             nameOf(a);
             likesOf(a);
@@ -412,6 +416,11 @@ public class Program {
             o.add("What do you like?");
             o.add("Chat about " + likesOf(talkTarget));
             if (talkTarget instanceof PatientData && ((PatientData) talkTarget).escaping) o.add("Ask them to go back inside");
+            if (talkTarget instanceof GuardData) {
+                GuardData gd = (GuardData) talkTarget;
+                o.add(gd.duty == 1 ? "Tell them to stop mopping" : "Ask them to mop the yard");
+                o.add(gd.duty == 2 ? "Tell them to stop sweeping" : "Ask them to sweep the leaves");
+            }
             if (talkTarget instanceof PatientData) {
                 o.add("Ask about their story");
                 if (((PatientData) talkTarget).chatCount > 0) o.add("Ask what they've noticed");
@@ -466,6 +475,10 @@ public class Program {
                 talkReply = likesLine(t);
             } else if (choice.startsWith("Chat about")) {
                 talkReply = chatLine(t);
+            } else if ((choice.equals("Ask them to mop the yard") || choice.equals("Tell them to stop mopping")) && t instanceof GuardData) {
+                talkReply = setGuardDuty((GuardData) t, choice.startsWith("Ask") ? 1 : 0);
+            } else if ((choice.equals("Ask them to sweep the leaves") || choice.equals("Tell them to stop sweeping")) && t instanceof GuardData) {
+                talkReply = setGuardDuty((GuardData) t, choice.startsWith("Ask") ? 2 : 0);
             } else if (choice.equals("Ask about their story") && t instanceof PatientData) {
                 talkReply = storyLine((PatientData) t);
             } else if (choice.equals("Ask what they've noticed") && t instanceof PatientData) {
@@ -681,6 +694,366 @@ public class Program {
             g.drawString("W/S  SELECT    E  CONFIRM    Q  LEAVE", ox, oy - 8);
         }
 
+        // ---------- TWO SEPARATE WARDS ----------
+        private BufferedImage interiorBg2Image, interiorUpperBg2Image;   // optional own art for ward 2 (interior_map_2.png / interior_map_upper_2.png)
+
+        /** 0 = PATIENT WARD 1, 1 = PATIENT WARD 2 (whichever ward building the overseer is standing in). */
+        private int currentWard() {
+            return insideBuilding != null && insideBuilding.equals(buildingNames[1]) ? 1 : 0;
+        }
+
+        // ---------- CANTEEN (on every floor of both wards) ----------
+        private static final Rectangle CANTEEN_COUNTER = new Rectangle(800, 576, 200, 30);
+        private static final Rectangle CANTEEN_SOLID = new Rectangle(798, 512, 204, 94);    // sign + kitchen unit + counter: nobody walks onto it
+        private static final float[][] CANTEEN_SPOTS = {{774f, 636f}, {800f, 636f}, {844f, 636f}, {870f, 636f},
+                {914f, 636f}, {940f, 636f}, {984f, 636f}, {1010f, 636f}};   // two seats per table
+        private static final int[] CANTEEN_TABLE_X = {772, 842, 912, 982};
+        private static final int CANTEEN_TABLE_Y = 666;
+        private static final int MEAL_FOOD = 3, MEAL_WATER = 2;        // what a meal at the canteen uses up
+        private static final long CANTEEN_EAT_MILLIS = 5500L;
+
+        private boolean canteenSpotTaken(int ward, int floor, int spot, PatientData except) {
+            for (PatientData o : patients) {
+                if (o != except && o.canteenState != 0 && o.ward == ward && o.canteenFloor == floor && o.canteenSpot == spot) return true;
+            }
+            return false;
+        }
+
+        private boolean startCanteen(PatientData p, boolean meal, long now) {
+            int floor = p.isInside ? p.floor : 1;
+            for (int i = 0; i < CANTEEN_SPOTS.length; i++) {
+                if (canteenSpotTaken(p.ward, floor, i, p)) continue;
+                p.canteenState = 1;
+                p.canteenSpot = i;
+                p.canteenFloor = floor;
+                p.canteenX = CANTEEN_SPOTS[i][0];
+                p.canteenY = CANTEEN_SPOTS[i][1];
+                p.canteenMeal = meal;
+                p.canteenStartMillis = now;
+                return true;
+            }
+            return false;
+        }
+
+        private void endCanteen(PatientData p, long now, long cooldownMillis) {
+            p.canteenState = 0;
+            p.canteenSpot = -1;
+            p.roamTimer = now;
+            p.nextCanteenMillis = now + cooldownMillis;
+        }
+
+        private static class FloatText {
+            String text;
+            float x, y;
+            long born;
+            int ward, floor;
+            Color color;
+        }
+        private final List<FloatText> floatTexts = new CopyOnWriteArrayList<>();
+
+        private void addFloat(PatientData p, String text, Color color) {
+            long now = System.currentTimeMillis();
+            floatTexts.removeIf(ft -> now - ft.born > 1800L);
+            FloatText ft = new FloatText();
+            ft.text = text;
+            ft.x = p.canteenX + PLAYER_WIDTH / 2f;
+            ft.y = p.canteenY - 30f;
+            ft.born = now;
+            ft.ward = p.ward;
+            ft.floor = p.canteenFloor;
+            ft.color = color;
+            floatTexts.add(ft);
+        }
+
+        private void renderFloatTexts(Graphics2D g) {
+            long now = System.currentTimeMillis();
+            g.setFont(new Font("SansSerif", Font.BOLD, 10));
+            for (FloatText ft : floatTexts) {
+                long age = now - ft.born;
+                if (age > 1800L) continue;
+                if (ft.ward != currentWard() || ft.floor != currentFloor) continue;
+                float k = age / 1800f;
+                int x = Math.round(ft.x) - g.getFontMetrics().stringWidth(ft.text) / 2;
+                int y = Math.round(ft.y - 22 * k);
+                int alpha = Math.max(0, Math.min(255, Math.round(255 * (1 - k))));
+                g.setColor(new Color(0, 0, 0, alpha / 2));
+                g.drawString(ft.text, x + 1, y + 1);
+                g.setColor(new Color(ft.color.getRed(), ft.color.getGreen(), ft.color.getBlue(), alpha));
+                g.drawString(ft.text, x, y);
+            }
+        }
+
+        /** A meal at the canteen uses up food AND water from the supply line. */
+        private void finishMeal(PatientData p, long now) {
+            int f, w;
+            if (p.canteenMeal) {                       // just a meal with friends
+                f = MEAL_FOOD;
+                w = MEAL_WATER;
+                p.hp = Math.min(100f, p.hp + 2f);
+            } else if (p.need.equals("HUNGRY")) {
+                f = costFood();
+                w = MEAL_WATER;
+            } else {
+                f = MEAL_FOOD;
+                w = costWater();
+            }
+            f = Math.min(f, Math.max(0, food));
+            w = Math.min(w, Math.max(0, water));
+            food -= f;
+            water -= w;
+            addFloat(p, "-" + f + " FOOD   -" + w + " WATER", new Color(244, 200, 130));
+            if (p.canteenMeal) {
+                endCanteen(p, now, 60_000L + p.rand.nextInt(60_000));
+                return;
+            }
+            String need = p.need;
+            p.need = "HEALTHY";
+            p.hp = Math.min(100f, p.hp + 25f);
+            p.needTimer = now;
+            score += 10;
+            currentEvent = nameOf(p) + (need.equals("HUNGRY") ? " ate" : " had a drink") + " at the canteen.  (-" + f + " food, -" + w + " water, +10)";
+            endCanteen(p, now, 5000L);
+        }
+
+        /** Hungry / thirsty residents walk to the canteen of their ward and help themselves; healthy ones sometimes drop by. */
+        private boolean updateCanteen(PatientData p, long nowMs) {
+            if (p.canteenState == 0) {
+                boolean hungry = p.need.equals("HUNGRY") || p.need.equals("THIRSTY");
+                if (!hungry || p.orderedToRoom || p.hp < REST_HP_LOW || nowMs < p.nextCanteenMillis
+                        || !suppliesFor(p.need) || isTargetedByOtherDoctor(p, null)) return false;
+                return startCanteen(p, false, nowMs);
+            }
+            boolean needOk = p.need.equals("HUNGRY") || p.need.equals("THIRSTY");
+            boolean bad = p.orderedToRoom || p.escaping || p.escorted || p.hp < REST_HP_LOW
+                    || (p.canteenMeal ? (!p.need.equals("HEALTHY") || food < 8 || water < 6) : (!needOk || !suppliesFor(p.need)))
+                    || (p.canteenState == 1 && nowMs - p.canteenStartMillis > 60_000L);
+            if (bad) {
+                endCanteen(p, nowMs, 15_000L);
+                return false;
+            }
+            if (p.canteenState == 1) {
+                if (travelTo(p, true, p.canteenFloor, p.canteenX, p.canteenY, 1.4f)) {
+                    p.canteenState = 2;
+                    p.eatUntilMillis = nowMs + CANTEEN_EAT_MILLIS;
+                }
+                return true;
+            }
+            p.facing = FACE_DOWN;
+            if (nowMs >= p.eatUntilMillis) finishMeal(p, nowMs);
+            return true;
+        }
+
+        private static final Color PX_OUTLINE = new Color(9, 14, 20);
+
+        /** A flat pixel-art box with a 1px dark outline, like the furniture in the ward art. */
+        private void pxBox(Graphics2D g, int x, int y, int w, int h, Color fill) {
+            g.setColor(PX_OUTLINE);
+            g.fillRect(x - 1, y - 1, w + 2, h + 2);
+            g.setColor(fill);
+            g.fillRect(x, y, w, h);
+        }
+
+        private void renderCanteen(Graphics2D g) {
+            int ward = currentWard();
+            Color accent = ward == 0 ? new Color(236, 170, 60) : new Color(80, 190, 170);
+            Rectangle c = CANTEEN_COUNTER;
+            int serverCx = c.x + 120;
+
+            // painted queue line on the floor, like the corridor markings
+            g.setColor(new Color(accent.getRed(), accent.getGreen(), accent.getBlue(), 110));
+            for (int x = c.x; x < c.x + c.width; x += 12) g.fillRect(x, c.y + c.height + 12, 7, 2);
+            g.setColor(new Color(0, 0, 0, 55));
+            g.fillRect(c.x + 2, c.y + c.height, c.width, 4);
+
+            // wall sign: dark plate with a hazard strip, same look as the UP / DOWN signs
+            int sx = c.x, sy = c.y - 62, sw = c.width;
+            pxBox(g, sx, sy, sw, 20, new Color(22, 33, 45));
+            for (int x = sx; x < sx + sw; x += 8) {
+                g.setColor(((x - sx) / 8) % 2 == 0 ? new Color(232, 186, 50) : new Color(20, 24, 28));
+                g.fillRect(x, sy, Math.min(8, sx + sw - x), 4);
+            }
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 13));
+            boolean stocked = food >= costFood() && water >= costWater();
+            String sign = !stocked ? "NO SUPPLIES" : ward == 0 ? "CANTEEN  A" : "CANTEEN  B";
+            g.setColor(new Color(150, 182, 206));
+            g.drawString(sign, sx + (sw - g.getFontMetrics().stringWidth(sign)) / 2, sy + 17);
+            g.setColor(stocked ? accent : new Color(225, 80, 70));
+            g.fillRect(sx + sw - 14, sy + 9, 6, 6);                                   // status lamp
+
+            // kitchen unit behind the server
+            int bx = c.x, by = c.y - 40, bw = c.width;
+            pxBox(g, bx, by, bw, 30, new Color(44, 60, 74));
+            g.setColor(new Color(30, 42, 54));
+            g.fillRect(bx, by + 18, bw, 12);
+            for (int x = bx + 40; x < bx + bw; x += 40) g.fillRect(x, by + 18, 1, 12);
+            g.setColor(new Color(110, 134, 150));
+            g.fillRect(bx, by + 16, bw, 2);
+            Color[] pots = {new Color(150, 92, 58), new Color(98, 138, 82), new Color(170, 140, 70), new Color(120, 150, 170)};
+            for (int i = 0; i < 6; i++) {
+                int px = bx + 14 + i * 32;
+                if (Math.abs(px + 9 - serverCx) < 28) continue;                        // the server stands here
+                g.setColor(PX_OUTLINE);
+                g.fillRect(px - 1, by + 6, 20, 11);
+                g.setColor(pots[i % pots.length]);
+                g.fillRect(px, by + 7, 18, 9);
+                g.setColor(new Color(255, 255, 255, 70));
+                g.fillRect(px + 2, by + 8, 6, 2);
+            }
+
+            // the server (a nurse in canteen colours), partly hidden by the counter
+            BufferedImage[] sf = ward == 0 ? serverFramesA : serverFramesB;
+            if (sf == null) sf = doctorIdleDown;
+            if (sf != null && sf.length > 0) {
+                BufferedImage frame = sf[(int) ((System.nanoTime() / 450_000_000L) % sf.length)];
+                int h = 56;
+                int w = Math.max(1, (int) Math.round(h * frame.getWidth() / (double) frame.getHeight()));
+                g.drawImage(frame, serverCx - w / 2, c.y + 16 - h, w, h, null);
+            }
+
+            // serving counter
+            pxBox(g, c.x, c.y, c.width, c.height, new Color(38, 52, 66));
+            g.setColor(new Color(166, 188, 202));
+            g.fillRect(c.x, c.y, c.width, 8);
+            g.setColor(new Color(214, 230, 240));
+            g.fillRect(c.x, c.y, c.width, 2);
+            g.setColor(new Color(96, 118, 134));
+            g.fillRect(c.x, c.y + 8, c.width, 2);
+            g.setColor(new Color(24, 34, 44));
+            for (int x = c.x + 50; x < c.x + c.width; x += 50) g.fillRect(x, c.y + 10, 1, c.height - 10);
+            g.setColor(new Color(accent.getRed() / 2, accent.getGreen() / 2, accent.getBlue() / 2));
+            g.fillRect(c.x + 2, c.y + c.height - 5, c.width - 4, 2);
+            Color[] food = {new Color(186, 104, 62), new Color(112, 154, 90), new Color(200, 164, 74), new Color(150, 110, 90)};
+            for (int i = 0; i < 5; i++) {                                              // trays of food
+                int tx = c.x + 12 + i * 38;
+                g.setColor(new Color(120, 140, 154));
+                g.fillRect(tx, c.y - 4, 26, 5);
+                g.setColor(food[i % food.length]);
+                g.fillRect(tx + 3, c.y - 8, 20, 5);
+                g.setColor(new Color(255, 255, 255, 60));
+                g.fillRect(tx + 3, c.y - 8, 20, 1);
+            }
+            g.setColor(new Color(170, 210, 230, 34));                                  // sneeze guard
+            g.fillRect(c.x + 4, c.y - 24, c.width - 8, 16);
+            g.setColor(new Color(200, 230, 245, 110));
+            g.fillRect(c.x + 4, c.y - 24, c.width - 8, 1);
+
+            // chairs: a backrest and a seat for each place at the tables
+            for (float[] spot : CANTEEN_SPOTS) {
+                int cx = (int) spot[0] + PLAYER_WIDTH / 2;
+                int top = CANTEEN_TABLE_Y - 36;
+                pxBox(g, cx - 12, top, 24, 22, new Color(52, 70, 86));
+                g.setColor(new Color(110, 134, 150));
+                g.fillRect(cx - 12, top, 24, 2);
+                pxBox(g, cx - 10, CANTEEN_TABLE_Y - 14, 20, 9, new Color(70, 92, 108));
+                g.setColor(new Color(120, 146, 162));
+                g.fillRect(cx - 10, CANTEEN_TABLE_Y - 14, 20, 2);
+            }
+        }
+
+        /** Tables, trays and the seated residents' name tags: drawn after the people so the tables hide their legs. */
+        private void renderCanteenFront(Graphics2D g) {
+            int ward = currentWard();
+            for (int tx : CANTEEN_TABLE_X) {
+                int ty = CANTEEN_TABLE_Y;
+                pxBox(g, tx, ty, 56, 20, new Color(88, 108, 124));
+                g.setColor(new Color(150, 174, 190));
+                g.fillRect(tx, ty, 56, 4);
+                g.setColor(new Color(60, 78, 92));
+                g.fillRect(tx, ty + 16, 56, 4);
+                g.setColor(PX_OUTLINE);
+                g.fillRect(tx + 4, ty + 21, 4, 6);
+                g.fillRect(tx + 48, ty + 21, 4, 6);
+            }
+            long now = System.currentTimeMillis();
+            for (PatientData p : patients) {
+                if (p.canteenState != 2 || !p.isInside || p.floor != currentFloor || p.ward != ward) continue;
+                int cx = (int) p.canteenX + PLAYER_WIDTH / 2;
+                g.setColor(new Color(214, 224, 230));                                  // tray in front of them
+                g.fillRect(cx - 6, CANTEEN_TABLE_Y + 5, 12, 4);
+                g.setColor(new Color(186, 104, 62));
+                g.fillRect(cx - 3, CANTEEN_TABLE_Y + 6, 6, 2);
+                g.setColor(new Color(230, 240, 245, 130));
+                int steam = (int) ((now / 200) % 4);
+                g.fillRect(cx - 2, CANTEEN_TABLE_Y + 2 - steam, 1, 2);
+                g.fillRect(cx + 2, CANTEEN_TABLE_Y + 1 - steam, 1, 2);
+                drawPatientTag(g, (int) p.posX, (int) p.currentY + 6, nameOf(p), p.need, p);
+            }
+        }
+
+        // ---------- GUARD CLEANING DUTY (asked for in conversation) ----------
+        private boolean targetedByOtherGuard(Object target, GuardData self) {
+            for (GuardData o : guards) if (o != self && o.cleanTarget == target) return true;
+            return false;
+        }
+
+        private void pickCleanJob(GuardData g) {
+            Object best = null;
+            double bestDist = Double.MAX_VALUE;
+            if (g.duty == 1) {
+                for (Puddle p : puddles) {
+                    if (targetedByOtherGuard(p, g)) continue;
+                    double d = Math.hypot(p.x - 13 - g.posX, p.y - 26 - g.currentY);
+                    if (d < bestDist) {
+                        bestDist = d;
+                        best = p;
+                    }
+                }
+            } else {
+                for (LeafPile lp : leafPiles) {
+                    if (targetedByOtherGuard(lp, g)) continue;
+                    double d = Math.hypot(lp.x - 13 - g.posX, lp.y - 26 - g.currentY);
+                    if (d < bestDist) {
+                        bestDist = d;
+                        best = lp;
+                    }
+                }
+            }
+            if (best == null) return;
+            g.cleanTarget = best;
+            g.cleanStartMillis = 0L;
+            g.taskState = g.duty == 1 ? 8 : 9;
+            g.roamPicked = false;
+            resetNav(g.nav);
+        }
+
+        private String setGuardDuty(GuardData g, int duty) {
+            g.duty = duty;
+            if (g.taskState == 8 || g.taskState == 9) {
+                if (duty == 0 || (g.taskState == 8) != (duty == 1)) {
+                    g.taskState = 0;
+                    g.cleanTarget = null;
+                    g.cleanStartMillis = 0L;
+                    g.roamPicked = false;
+                    resetNav(g.nav);
+                }
+            }
+            if (duty == 0) return "\"Alright, back to my usual patrol.\"";
+            int n = duty == 1 ? puddles.size() : leafPiles.size();
+            String left = n > 0 ? "  (" + n + (duty == 1 ? " puddle" : " leaf pile") + (n == 1 ? "" : "s") + " to do right now)"
+                    : "  (nothing to " + (duty == 1 ? "mop" : "sweep") + " right now - I'll start as soon as there is)";
+            addNotice(nameOf(g) + " is on " + (duty == 1 ? "mop" : "broom") + " duty.", new Color(132, 207, 228));
+            return (duty == 1
+                    ? pick("\"Understood. I'll keep the yard mopped.\"", "\"Mop duty, got it. Nothing stays wet on my watch.\"")
+                    : pick("\"Understood. I'll keep the leaves swept up.\"", "\"Broom duty, got it. The yard will be spotless.\"")) + left;
+        }
+
+        /** If the overseer ends up inside furniture (e.g. an old save from before a wall was added), step out to the nearest free spot. */
+        private void unstickOverseer() {
+            if (insideBuilding == null || canMoveTo(overseerX, overseerY)) return;
+            for (int r = 4; r <= 260; r += 4) {
+                for (int dx = -r; dx <= r; dx += 4) {
+                    for (int dy = -r; dy <= r; dy += 4) {
+                        if (Math.max(Math.abs(dx), Math.abs(dy)) != r) continue;
+                        if (canMoveTo(overseerX + dx, overseerY + dy)) {
+                            overseerX += dx;
+                            overseerY += dy;
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
         // ---------- RUN GOAL, MEMORIAL + END SCREEN ----------
         private static final int WIN_DAYS = 20;          // goal 1: keep the shelter running this many days...
         private static final int WIN_DISCHARGED = 30;    // goal 2: ...or send this many residents home healthy
@@ -750,6 +1123,13 @@ public class Program {
             m.cause = causeOf(p.need);
             memorial.add(m);
             lostCount++;
+            addPop(p, "RIP", new Color(240, 110, 95));
+            playSound("death");
+            shakeUntilNanos = System.nanoTime() + 450_000_000L;
+            if (p.vip) {
+                score -= 300;
+                addNotice("The VIP is gone... the shelter's reputation takes a hit (-300).", new Color(225, 112, 83));
+            }
             String msg = "In memory: " + m.name + ", Day " + m.day + " (" + m.cause + ").  -100";
             currentEvent = "WARNING: " + m.name + " died of " + m.cause + "! (" + lostCount + "/" + LOSE_DEATHS + " lost, -100)";
             addNotice(msg, new Color(225, 112, 83));
@@ -1050,6 +1430,7 @@ public class Program {
             float posX, currentY;
             boolean isInside = false;
             int floor = 1;
+            int ward = 0;                // which patient ward building (0 / 1) they are in or belong to
             NavAgent nav = new NavAgent();
             String name = "";            // see nameOf(): handed out lazily from NPC_NAMES
             String likes = "";           // see likesOf()
@@ -1104,6 +1485,8 @@ public class Program {
 
         private static class PatientData extends NavActor {
             int id;
+            boolean vip = false;            // a VIP: big reward if they get home, penalty if they die
+            boolean carryingLoot = false;   // runaway event: running off with a bag of medicine
             float targetX, targetY;
             boolean destInside;
             int destFloor;
@@ -1135,6 +1518,11 @@ public class Program {
             String waitingFor = "";          // who they can't wait to see again once they're home
             int chatCount = 0;               // how often the overseer has chatted with them
             String farewell = "";            // what they say on the way out of the gate
+            int canteenState = 0;            // 0 none, 1 walking to the canteen, 2 eating
+            int canteenSpot = -1, canteenFloor = 1;
+            float canteenX, canteenY;
+            boolean canteenMeal = false;     // a social meal (not a cure)
+            long canteenStartMillis = 0L, eatUntilMillis = 0L, nextCanteenMillis = 0L;
             long slipCooldownMillis = 0L;
             // social activities (games / chat with another resident)
             int playState = 0;               // 0 none, 1 walking to the spot, 2 playing
@@ -1172,6 +1560,9 @@ public class Program {
             boolean carrying = false;     // walking the bagged trash out to the pile
             long storageStartMillis = 0L;
             PatientData escortTarget = null;   // runaway being chased (taskState 6) / escorted (taskState 7)
+            int duty = 0;                      // 0 patrol, 1 mop duty, 2 broom duty (set by talking to the guard)
+            Object cleanTarget = null;         // the puddle / leaf pile being cleaned (taskState 8 / 9)
+            long cleanStartMillis = 0L;
             long roamTimer = System.currentTimeMillis();
             Random rand = new Random();
 
@@ -1185,11 +1576,12 @@ public class Program {
         private List<GuardData> guards = new CopyOnWriteArrayList<>();
 
         private static class ReceptionistData extends NavActor {
-            ReceptionistData(float x, float y, int floor) {
+            ReceptionistData(float x, float y, int floor, int ward) {
                 this.posX = x;
                 this.currentY = y;
                 this.isInside = true;
                 this.floor = floor;
+                this.ward = ward;
             }
         }
         private final List<ReceptionistData> receptionists = new CopyOnWriteArrayList<>();
@@ -1234,9 +1626,10 @@ public class Program {
         private final Rectangle indoorExit = new Rectangle(550, 654, 100, 56);
 
         // ---------- RECEPTIONISTS (one at the front desk on every floor) ----------
-        private static final float RECEPTION_X = 572f, RECEPTION_Y = 346f;   // stands in the gap of the medical desk
+        private static final float RECEPTION_X = 587f, RECEPTION_Y = 346f;   // stands in the gap of the medical desk
         private final Rectangle receptionZone = new Rectangle(520, 330, 162, 92);
         private BufferedImage[] receptionistFrames;
+        private BufferedImage[] serverFramesA, serverFramesB;   // canteen servers (the nurse sprite in amber / teal)
 
         private static int wardBandTop(int band) {
             return WARD_BAND_TOP + WARD_BAND_PERIOD * band;
@@ -1271,7 +1664,9 @@ public class Program {
             r.add(new Rectangle(597, 8, 5, 295));                           // divider between its two columns
             r.add(new Rectangle(225, 0, 150, 114));                         // UP staircase
             r.add(new Rectangle(820, 0, 155, 114));                         // DOWN staircase
-            r.add(new Rectangle(538, 340, 126, 48));                        // medical station counter
+            r.add(new Rectangle(530, 328, 140, 54));                        // reception desk + the unit behind it
+            r.add(CANTEEN_SOLID);                                           // canteen: sign, kitchen unit and serving counter
+            for (int tx : CANTEEN_TABLE_X) r.add(new Rectangle(tx, CANTEEN_TABLE_Y, 56, 20));   // canteen tables
             if (withExitConsole) r.add(new Rectangle(495, 652, 55, 36));    // exit console (ground floor only)
             r.add(new Rectangle(472, 324, 16, 24));                         // plants beside the medical block
             r.add(new Rectangle(718, 324, 16, 24));
@@ -1371,6 +1766,8 @@ public class Program {
                 System.err.println("interior_map_upper.png not found on the classpath - building the upper-floor art from interior_map.png");
                 interiorUpperBgImage = buildUpperFloorBg(interiorBgImage);
             }
+            interiorBg2Image = loadImage("/interior_map_2.png");
+            interiorUpperBg2Image = loadImage("/interior_map_upper_2.png");
             storageBgImage = loadImage("/storage_room.png");
             wallOverlayImage = loadImage("/wall_gate_overlay.png");
             if (wallOverlayImage == null) {
@@ -1391,6 +1788,10 @@ public class Program {
             // Own receptionist art is used if you add it (64x64 frames in a row); otherwise the nurse is recoloured
             receptionistFrames = loadFrames("/receptionist_idle_down.png", false);
             if (receptionistFrames == null && doctorIdleDown != null) receptionistFrames = tintFrames(doctorIdleDown);
+            if (doctorIdleDown != null) {
+                serverFramesA = tintFrames(doctorIdleDown, 0.09f);
+                serverFramesB = tintFrames(doctorIdleDown, 0.46f);
+            }
             guardianSheet = trimTransparent(loadImage("/guardian_sprite.png"));
             guardWalkDown = loadFrames("/guard_walk_down.png", false);
             guardWalkUp = loadFrames("/guard_walk_up.png", false);
@@ -1434,16 +1835,19 @@ public class Program {
             }
 
             doctors.add(new DoctorData(300, 430, false, 1)); // was inside a wall
-            doctors.add(new DoctorData(400, 450, true, 2)); // lobby (old spot was inside a room block)
+            DoctorData wardTwoDoctor = new DoctorData(400, 450, true, 2); // lobby of ward 2
+            wardTwoDoctor.ward = 1;
+            doctors.add(wardTwoDoctor);
 
             // Moved left guard further down into open walkway area (Y=445)
             guards.add(new GuardData(208, 440)); // was inside the lower-building wall
             guards.add(new GuardData(600, 450));
             for (GuardData guard : guards) guard.flashlightAngle = Math.PI / 2; // start pointing down the walkway
-            for (int f = 1; f <= 3; f++) receptionists.add(new ReceptionistData(RECEPTION_X, RECEPTION_Y, f));   // one at every front desk
+            for (int w = 0; w < 2; w++) for (int f = 1; f <= 3; f++) receptionists.add(new ReceptionistData(RECEPTION_X, RECEPTION_Y, f, w));   // one at every front desk
 
             // Continue from the last save (if any); closing the window also saves
             boolean continued = loadGame();
+            rollDailyGoals();
             if (continued) addNotice("Progress loaded - Day " + day + ".", new Color(132, 214, 165));
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 if (!skipSaveOnExit) saveGame();
@@ -1491,13 +1895,18 @@ public class Program {
             bindKey(KeyEvent.VK_ENTER, e -> { if (hirePanelOpen) hirePanelKey(KeyEvent.VK_ENTER); });
             // BACKSPACE = pause menu (resume / save / log out)
             Input.keyboard().onKeyPressed(KeyEvent.VK_BACK_SPACE, e -> {
-                if (endScreenOpen) return;
+                if (endScreenOpen || cardOpen()) return;
                 if (pauseMenuOpen) closePauseMenu();
                 else openPauseMenu();
             });
             // ESC = close a panel, otherwise step back out of the building
+            Input.keyboard().onKeyPressed(KeyEvent.VK_M, e -> {
+                soundOn = !soundOn;
+                currentEvent = soundOn ? "Sound on  (M to mute)." : "Sound muted  (M to unmute).";
+            });
+            Input.keyboard().onKeyPressed(KeyEvent.VK_SPACE, e -> { if (cardOpen() && !endScreenOpen && !pauseMenuOpen) cardKey(KeyEvent.VK_SPACE); });
             Input.keyboard().onKeyPressed(KeyEvent.VK_ESCAPE, e -> {
-                if (endScreenOpen) return;
+                if (endScreenOpen || cardOpen()) return;
                 if (pauseMenuOpen) closePauseMenu();
                 else if (talkTarget != null) closeTalk();
                 else if (hirePanelOpen) hirePanelOpen = false;
@@ -1527,6 +1936,7 @@ public class Program {
         private void bindKey(int keyCode, java.util.function.Consumer<KeyEvent> action) {
             Input.keyboard().onKeyPressed(keyCode, e -> {
                 if (endScreenOpen) endScreenKey(keyCode);
+                else if (cardOpen()) cardKey(keyCode);
                 else if (pauseMenuOpen) pauseMenuKey(keyCode);
                 else if (talkTarget != null) talkMenuKey(keyCode);
                 else action.accept(e);
@@ -1534,7 +1944,7 @@ public class Program {
         }
 
         private void openPauseMenu() {
-            if (transitionActive()) return;
+            if (transitionActive() || cardOpen()) return;
             pauseMenuOpen = true;
             pauseMenuRow = 0;
             pauseConfirmErase = false;
@@ -1955,7 +2365,7 @@ public class Program {
 
         /** F: swing the mop / broom at whatever is within reach. */
         private void useTool() {
-            if (transitionActive()) return;
+            if (transitionActive() || cardOpen()) return;
             if (insideBuilding != null) {
                 currentEvent = overseerTool == TOOL_NONE ? "Your hands are empty." : "Mops and brooms are for the yard - take it outside.";
                 return;
@@ -1983,6 +2393,8 @@ public class Program {
                     }
                 }
                 if (n > 0) {
+                    dayMopped += n;
+                    checkDailyGoals();
                     score += 8 * n;
                     currentEvent = "Mopped up " + n + " puddle" + (n == 1 ? "" : "s") + "!  +" + (8 * n);
                 } else {
@@ -1998,6 +2410,8 @@ public class Program {
                     }
                 }
                 if (n > 0) {
+                    daySwept += n;
+                    checkDailyGoals();
                     score += 3 * leaves;
                     currentEvent = "Swept up " + leaves + " leaves!  +" + (3 * leaves);
                 } else {
@@ -2265,6 +2679,10 @@ public class Program {
 
         /** Recolours the strongly red parts (cap cross etc.) of the nurse frames to blue so the receptionist looks different. */
         private BufferedImage[] tintFrames(BufferedImage[] source) {
+            return tintFrames(source, 0.58f);
+        }
+
+        private BufferedImage[] tintFrames(BufferedImage[] source, float hue) {
             BufferedImage[] result = new BufferedImage[source.length];
             for (int i = 0; i < source.length; i++) {
                 BufferedImage in = source[i];
@@ -2275,7 +2693,7 @@ public class Program {
                         if ((argb >>> 24) > 0) {
                             float[] hsb = Color.RGBtoHSB((argb >> 16) & 255, (argb >> 8) & 255, argb & 255, null);
                             boolean red = (hsb[0] < 0.04f || hsb[0] > 0.95f) && hsb[1] > 0.4f && hsb[2] > 0.4f;
-                            if (red) argb = (argb & 0xFF000000) | (Color.HSBtoRGB(0.58f, hsb[1], hsb[2]) & 0x00FFFFFF);
+                            if (red) argb = (argb & 0xFF000000) | (Color.HSBtoRGB(hue, hsb[1], hsb[2]) & 0x00FFFFFF);
                         }
                         out.setRGB(x, y, argb);
                     }
@@ -2312,38 +2730,88 @@ public class Program {
             }
         }
 
+        private static final Rectangle RECEPTION_DESK = new Rectangle(530, 352, 140, 30);   // counter in front of the receptionist
+        private static final int RECEPTION_BACK_Y = 328;                                     // top of the unit behind her
+
         private void renderReceptionist(Graphics2D g) {
             ReceptionistData rec = null;
-            for (ReceptionistData r : receptionists) if (r.floor == currentFloor) rec = r;
+            for (ReceptionistData r : receptionists) if (r.floor == currentFloor && r.ward == currentWard()) rec = r;
             if (rec == null) return;
+            Rectangle d = RECEPTION_DESK;
+            Color accent = new Color(110, 170, 230);
+
+            // unit behind her with two monitors (covers the old art desk so it all matches)
+            int bx = d.x + 2, by = RECEPTION_BACK_Y, bw = d.width - 4;
+            pxBox(g, bx, by, bw, 28, new Color(44, 60, 74));
+            g.setColor(new Color(30, 42, 54));
+            g.fillRect(bx, by + 18, bw, 10);
+            g.setColor(new Color(110, 134, 150));
+            g.fillRect(bx, by + 16, bw, 2);
+            for (int side = 0; side < 2; side++) {
+                int mx = side == 0 ? bx + 10 : bx + bw - 34;
+                pxBox(g, mx, by + 2, 24, 13, new Color(18, 28, 38));
+                g.setColor(new Color(60, 190, 190, 200));
+                g.fillRect(mx + 2, by + 4, 20, 9);
+                g.setColor(new Color(160, 240, 235));
+                g.fillRect(mx + 4, by + 6, 10, 1);
+                g.fillRect(mx + 4, by + 9, 14, 1);
+            }
+
+            // the receptionist, partly hidden by the counter
             BufferedImage frame = null;
             if (receptionistFrames != null && receptionistFrames.length > 0) {
                 frame = receptionistFrames[(int) ((System.nanoTime() / 450_000_000L) % receptionistFrames.length)];
             }
-            int x = (int) rec.posX, y = (int) rec.currentY;
+            int cx = (int) rec.posX + PLAYER_WIDTH / 2;
             if (frame != null) {
-                BufferedImage half = upperHalf(frame);
-                int height = 56;
-                int width = Math.max(1, (int) Math.round(height * half.getWidth() / (double) half.getHeight()));
-                g.drawImage(half, x + PLAYER_WIDTH / 2 - width / 2, y + PLAYER_HEIGHT - height + 3, width, height, null);
-            } else if (doctorSheet != null) {
-                drawCharacterSprite(g, upperHalf(doctorSheet), x, y + 3, 56);
+                int h = 56;
+                int w = Math.max(1, (int) Math.round(h * frame.getWidth() / (double) frame.getHeight()));
+                g.drawImage(frame, cx - w / 2, d.y + 16 - h, w, h, null);
             } else {
-                renderCharacterBadge(g, x, y, new Color(110, 170, 230), "Receptionist", "REC");
+                renderCharacterBadge(g, (int) rec.posX, (int) rec.currentY, new Color(110, 170, 230), "Receptionist", "REC");
             }
-            drawEntityLabel(g, "Reception: " + nameOf(rec), x + PLAYER_WIDTH / 2, y + 62, new Color(200, 225, 250));
+
+            // counter
+            pxBox(g, d.x, d.y, d.width, d.height, new Color(38, 52, 66));
+            g.setColor(new Color(166, 188, 202));
+            g.fillRect(d.x, d.y, d.width, 8);
+            g.setColor(new Color(214, 230, 240));
+            g.fillRect(d.x, d.y, d.width, 2);
+            g.setColor(new Color(96, 118, 134));
+            g.fillRect(d.x, d.y + 8, d.width, 2);
+            g.setColor(new Color(24, 34, 44));
+            for (int x = d.x + 46; x < d.x + d.width; x += 46) g.fillRect(x, d.y + 10, 1, d.height - 10);
+            g.setColor(new Color(accent.getRed() / 2, accent.getGreen() / 2, accent.getBlue() / 2));
+            g.fillRect(d.x + 2, d.y + d.height - 3, d.width - 4, 2);
+            g.setColor(new Color(236, 214, 120));                                   // bell + paperwork on the counter
+            g.fillRect(d.x + 14, d.y - 4, 8, 4);
+            g.setColor(new Color(232, 236, 238));
+            g.fillRect(d.x + d.width - 30, d.y - 4, 14, 4);
+            g.setColor(new Color(186, 196, 204));
+            g.fillRect(d.x + d.width - 30, d.y - 1, 14, 1);
+
+            // name plate on the front of the counter
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 10));
+            String plate = "RECEPTION  ·  " + nameOf(rec).toUpperCase();
+            int pw = g.getFontMetrics().stringWidth(plate) + 12;
+            int px = d.x + (d.width - pw) / 2;
+            pxBox(g, px, d.y + 12, pw, 12, new Color(22, 33, 45));
+            g.setColor(new Color(150, 182, 206));
+            g.drawString(plate, px + 6, d.y + 22);
+            g.setColor(accent);
+            g.fillRect(px + pw - 5, d.y + 16, 3, 3);
         }
 
         private String floorReportText() {
             int here = 0, needCare = 0, critical = 0;
             for (PatientData p : patients) {
-                if (p.isInside && p.floor == currentFloor && !p.arriving) {
+                if (p.isInside && p.floor == currentFloor && p.ward == currentWard() && !p.arriving) {
                     here++;
                     if (!p.need.equals("HEALTHY")) needCare++;
                     if (isCritical(p)) critical++;
                 }
             }
-            return "Floor " + currentFloor + " has " + here + " patient" + (here == 1 ? "" : "s")
+            return "Ward " + (currentWard() + 1) + ", floor " + currentFloor + " has " + here + " patient" + (here == 1 ? "" : "s")
                     + (needCare > 0 ? ", " + needCare + " need care" : ", all doing fine")
                     + (critical > 0 ? " (" + critical + " critical!)" : "")
                     + ".  " + patients.size() + " residents in total.";
@@ -2409,7 +2877,7 @@ public class Program {
         }
 
         private void moveOverseer(int dirX, int dirY) {
-            if (storagePanelOpen || hirePanelOpen || pauseMenuOpen || transitionActive()) return;
+            if (storagePanelOpen || hirePanelOpen || pauseMenuOpen || transitionActive() || cardOpen()) return;
             // Accumulate fractional speed (e.g. 2.5 px) and move by the whole pixels that have built up
             moveRemainderX += dirX * MOVE_SPEED;
             moveRemainderY += dirY * MOVE_SPEED;
@@ -2435,6 +2903,11 @@ public class Program {
                 // Restart the walk cycle on the first step so it always begins on frame 0
                 if (now - overseerLastMoveNanos > OVERSEER_WALK_HOLD_NANOS) overseerWalkStartNanos = now;
                 overseerLastMoveNanos = now;
+                long nowMs = System.currentTimeMillis();
+                if (nowMs - lastStepSoundMillis > 270L) {
+                    lastStepSoundMillis = nowMs;
+                    playSound("step");
+                }
             }
         }
 
@@ -2461,7 +2934,7 @@ public class Program {
         }
 
         private void interactWithLocation() {
-            if (transitionActive()) return;
+            if (transitionActive() || cardOpen()) return;
             Rectangle playerBounds = actorBoundsAt(overseerX, overseerY);
             if (hirePanelOpen) {
                 hirePanelKey(KeyEvent.VK_E);
@@ -2952,7 +3425,11 @@ public class Program {
             if (hireDelivered) return;
             hireDelivered = true;
             if (hiredRoleName.equals("Doctor")) {
-                doctors.add(new DoctorData(580, 480, true, 1));
+                DoctorData newDoc = new DoctorData(580, 480, true, 1);
+                int inWard0 = 0, inWard1 = 0;
+                for (DoctorData od : doctors) { if (od.ward == 1) inWard1++; else inWard0++; }
+                newDoc.ward = inWard1 < inWard0 ? 1 : 0;      // new hires go to the ward with fewer doctors
+                doctors.add(newDoc);
             } else {
                 GuardData newGuard = new GuardData(600, 440);
                 newGuard.flashlightAngle = Math.PI / 2;
@@ -2992,7 +3469,9 @@ public class Program {
 
         private void updateGameLoop() {
             updateTransition();
-            if (pauseMenuOpen || endScreenOpen) return;      // paused / run over: the whole shelter is frozen
+            updateAmbient();
+            if (pauseMenuOpen || endScreenOpen || cardOpen()) return;      // paused / run over / reading a card: the whole shelter is frozen
+            unstickOverseer();
             if (talkTarget != null && (!talkableNow(talkTarget)
                     || !(patients.contains(talkTarget) || doctors.contains(talkTarget) || guards.contains(talkTarget) || receptionists.contains(talkTarget)))) {
                 closeTalk();                // they left, or the overseer walked away / changed floor
@@ -3012,7 +3491,7 @@ public class Program {
                     // arriving / discharged patients stay out of the sickness cycle
                 } else if (p.need.equals("HEALTHY")) {
                     if (!tutorialActive) {   // the tutorial controls when someone gets sick
-                        int sicknessThreshold = sicknessBaseMillis();   // ~110-140 s between illnesses on day 1, ~55-85 s by day 20
+                        int sicknessThreshold = p.vip ? sicknessBaseMillis() / 2 : sicknessBaseMillis();   // ~110-140 s between illnesses on day 1, ~55-85 s by day 20
                         if (System.currentTimeMillis() - p.needTimer > sicknessThreshold + p.rand.nextInt(30000)) {
                             p.needTimer = System.currentTimeMillis();
                             String[] needsList = {"HUNGRY", "THIRSTY", "SICK"};
@@ -3020,7 +3499,10 @@ public class Program {
                         }
                     }
                 } else if (!tutorialActive) {   // no one gets worse while you are still learning
-                    p.hp -= p.lyingDown ? needDecay() * LYING_DECAY_FACTOR : needDecay();
+                    float decay = p.lyingDown ? needDecay() * LYING_DECAY_FACTOR : needDecay();
+                    if (priorityWard >= 0 && p.ward != priorityWard) decay *= 1.4f;      // outbreak: the other ward is neglected today
+                    p.hp -= decay;
+                    if (day <= 2 && p.hp < 6f) p.hp = 6f;                                 // nobody dies in the first two days
                     if (p.hp <= 0) {
                         deadPatients.add(p);
                         score -= 100;
@@ -3032,6 +3514,7 @@ public class Program {
                         String cm = nameOf(p) + " is in CRITICAL condition! Press 4 to call a doctor.";
                         currentEvent = cm;
                         addNotice(cm, new Color(240, 110, 95));
+                        playSound("alert");
                     }
                 } else {
                     p.criticalNotified = false;
@@ -3062,6 +3545,13 @@ public class Program {
                 lastTickTime = currentTime;
                 runStorageAutoRestock();
                 checkLowSupplies();
+                if (lateTruckPending && secondsRemaining <= 110) {            // the delayed truck finally arrives
+                    lateTruckPending = false;
+                    deliverSupplies(1.0f, "The late supply truck");
+                    supplyTruckActive = true;
+                    supplyTruckPosX = -getArrivalTruckWidth(supplyTruckSprite);
+                }
+                if (runawayAtSeconds >= 0 && secondsRemaining <= runawayAtSeconds && !tutorialActive) fireRunawayEvent();
                 if (secondsRemaining > 0) {
                     secondsRemaining--;
                 } else {
@@ -3311,6 +3801,11 @@ public class Program {
          * Returns true only when the actor has reached the final destination.
          */
         private boolean travelTo(NavActor a, boolean targetInside, int targetFloor, float tx, float ty, float speed) {
+            return travelTo(a, targetInside, targetFloor, a.ward, tx, ty, speed);
+        }
+
+        /** Same, but the destination is inside a particular ward building (0 or 1). */
+        private boolean travelTo(NavActor a, boolean targetInside, int targetFloor, int targetWard, float tx, float ty, float speed) {
             ensureNavGrids();
             placeActor(a);
             NavAgent nav = a.nav;
@@ -3318,7 +3813,8 @@ public class Program {
 
             float gx = tx, gy = ty;
             int portal = PORTAL_NONE;
-            if (a.isInside == targetInside) {
+            boolean wrongWard = a.isInside && targetInside && a.ward != targetWard;
+            if (a.isInside == targetInside && !wrongWard) {
                 if (a.isInside && a.floor != targetFloor) {
                     boolean up = targetFloor > a.floor;
                     gx = up ? STAIRS_UP_GOAL_X : STAIRS_DOWN_GOAL_X;
@@ -3326,7 +3822,7 @@ public class Program {
                     portal = up ? PORTAL_STAIRS_UP : PORTAL_STAIRS_DOWN;
                 }
             } else if (!a.isInside) {
-                gx = nearestDoorX(a.posX);
+                gx = targetWard == 1 ? door2X : door1X;
                 gy = door1Y;
                 portal = PORTAL_DOOR_IN;
             } else if (a.floor != 1) {
@@ -3348,6 +3844,7 @@ public class Program {
             switch (portal) {
                 case PORTAL_DOOR_IN:
                     a.isInside = true;
+                    a.ward = targetWard;
                     a.floor = 1;
                     a.posX = 584;
                     a.currentY = 620;
@@ -3365,7 +3862,7 @@ public class Program {
                     return false;
                 case PORTAL_EXIT:
                     a.isInside = false;
-                    a.posX = randomDoorX();
+                    a.posX = a.ward == 1 ? door2X : door1X;
                     a.currentY = door1Y + 30;
                     resetNav(nav);
                     return false;
@@ -3397,6 +3894,8 @@ public class Program {
             }
             ensureNavGrids();
             placeActor(g);
+
+            if (g.taskState == 0 && g.duty != 0 && g.escortTarget == null) pickCleanJob(g);
 
             float goalX, goalY;
             if (g.taskState == 2) {
@@ -3433,6 +3932,40 @@ public class Program {
                     return;
                 }
                 if (g.taskState == 7 && gap <= 20) return;   // walking alongside: let the resident lead
+            } else if (g.taskState == 8 || g.taskState == 9) {
+                Object ct = g.cleanTarget;
+                boolean valid = ct != null && (g.taskState == 8 ? puddles.contains(ct) : leafPiles.contains(ct));
+                if (!valid) {
+                    g.cleanTarget = null;
+                    g.cleanStartMillis = 0L;
+                    g.taskState = 0;
+                    g.roamPicked = false;
+                    resetNav(g.nav);
+                    return;
+                }
+                goalX = (g.taskState == 8 ? ((Puddle) ct).x : ((LeafPile) ct).x) - 13f;
+                goalY = (g.taskState == 8 ? ((Puddle) ct).y : ((LeafPile) ct).y) - 26f;
+                if (Math.abs(g.posX - goalX) <= 8f && Math.abs(g.currentY - goalY) <= 8f) {
+                    long workNow = System.currentTimeMillis();
+                    if (g.cleanStartMillis == 0L) g.cleanStartMillis = workNow;
+                    if (workNow - g.cleanStartMillis >= 1400L) {            // done scrubbing / sweeping
+                        if (g.taskState == 8) {
+                            puddles.remove(ct);
+                            score += 5;
+                        } else {
+                            LeafPile done = (LeafPile) ct;
+                            leafPiles.remove(done);
+                            score += 2 * done.count;
+                        }
+                        g.cleanTarget = null;
+                        g.cleanStartMillis = 0L;
+                        g.taskState = 0;
+                        g.roamPicked = false;
+                        resetNav(g.nav);
+                    }
+                    return;
+                }
+                g.cleanStartMillis = 0L;
             } else {
                 if (!g.roamPicked || System.currentTimeMillis() - g.roamTimer > 7000) {
                     g.roamPicked = true;
@@ -3456,6 +3989,8 @@ public class Program {
                 if (g.carrying) stackedTrashCount++;   // can't reach the pile: dump it where he stands
                 g.carrying = false;
                 g.escortTarget = null;
+                g.cleanTarget = null;
+                g.cleanStartMillis = 0L;
                 g.taskState = 0; // unreachable job: drop it instead of pushing against a wall
                 g.roamPicked = false;
                 resetNav(g.nav);
@@ -3534,7 +4069,7 @@ public class Program {
             GuardData best = null;
             double bestDist = Double.MAX_VALUE;
             for (GuardData g : guards) {
-                if (g.taskState != 0 || g.inStorage || g.escortTarget != null) continue;
+                if ((g.taskState != 0 && g.taskState != 8 && g.taskState != 9) || g.inStorage || g.escortTarget != null) continue;
                 double d = Math.hypot(g.posX - p.posX, g.currentY - p.currentY);
                 if (d < bestDist) {
                     bestDist = d;
@@ -3543,6 +4078,8 @@ public class Program {
             }
             if (best == null) return false;
             best.escortTarget = p;
+            best.cleanTarget = null;
+            best.cleanStartMillis = 0L;
             best.taskState = 6;
             best.roamPicked = false;
             resetNav(best.nav);
@@ -3568,7 +4105,7 @@ public class Program {
 
         private boolean freeToSocialise(PatientData p) {
             return p != talkTarget && !p.leaving && !p.arriving && !p.exiting && !p.escaping && !p.escorted
-                    && !p.orderedToRoom && !p.resting && p.need.equals("HEALTHY") && !isPatientBeingTended(p);
+                    && !p.orderedToRoom && !p.resting && p.need.equals("HEALTHY") && p.canteenState == 0 && !isPatientBeingTended(p);
         }
 
         /** Looks for a free partner and sends both off to play something together. */
@@ -3577,7 +4114,7 @@ public class Program {
             PatientData partner = null;
             double best = Double.MAX_VALUE;
             for (PatientData q : patients) {
-                if (q == p || q.playState != 0 || nowMs < q.nextPlayMillis || !freeToSocialise(q)) continue;
+                if (q == p || q.ward != p.ward || q.playState != 0 || nowMs < q.nextPlayMillis || !freeToSocialise(q)) continue;
                 double d = Math.hypot(q.posX - p.posX, q.currentY - p.currentY)
                         + (q.isInside != p.isInside ? 400 : 0) + (q.floor != p.floor ? 200 : 0);
                 if (d < best) {
@@ -3743,7 +4280,7 @@ public class Program {
                 if (!p.playHost || p.playState != 2 || p.playPartner == null) continue;
                 PatientData q = p.playPartner;
                 if (p.isInside != indoors || q.isInside != indoors) continue;
-                if (indoors && (p.floor != currentFloor || q.floor != currentFloor)) continue;
+                if (indoors && (p.floor != currentFloor || q.floor != currentFloor || p.ward != currentWard())) continue;
                 double mx = (p.posX + q.posX) / 2.0 + PLAYER_WIDTH / 2.0;
                 double fy = Math.max(p.currentY, q.currentY) + PLAYER_HEIGHT;
                 drawGameProp(g, p, q, mx, fy, now);
@@ -3777,25 +4314,33 @@ public class Program {
             g.drawString("Z", x + 33, y - 18 - bob);
         }
 
-        private boolean isRoomTaken(int floor, int room, PatientData except) {
+        private boolean isRoomTaken(int ward, int floor, int room, PatientData except) {
             for (PatientData other : patients) {
-                if (other != except && other.roomIndex == room && other.roomFloor == floor) return true;
+                if (other != except && other.roomIndex == room && other.roomFloor == floor && other.ward == ward) return true;
             }
             return false;
         }
 
-        /** Gives a patient their own ward room: fills floor 1 first, then 2 and 3 (shares beds only if all are taken). */
+        /** Gives a patient their own bed in the emptier of the two wards: fills floor 1 first, then 2 and 3 (shares beds only if all are taken). */
         private void assignRoom(PatientData p) {
             if (p.roomIndex >= 0) return;
-            for (int floor = 1; floor <= 3; floor++) {
-                for (int room : WARD_ROOM_ORDER) {
-                    if (!isRoomTaken(floor, room, p)) {
-                        setPatientRoom(p, floor, room);
-                        return;
+            int[] count = new int[2];
+            for (PatientData o : patients) if (o != p && o.roomIndex >= 0) count[o.ward]++;
+            int first = count[1] < count[0] ? 1 : 0;
+            for (int t = 0; t < 2; t++) {
+                int ward = (first + t) % 2;
+                for (int floor = 1; floor <= 3; floor++) {
+                    for (int room : WARD_ROOM_ORDER) {
+                        if (!isRoomTaken(ward, floor, room, p)) {
+                            p.ward = ward;
+                            setPatientRoom(p, floor, room);
+                            return;
+                        }
                     }
                 }
             }
             int shared = (p.id - 1) % (3 * WARD_ROOM_ORDER.length);
+            p.ward = p.id % 2;
             setPatientRoom(p, shared / WARD_ROOM_ORDER.length + 1, WARD_ROOM_ORDER[shared % WARD_ROOM_ORDER.length]);
         }
 
@@ -3849,7 +4394,14 @@ public class Program {
                     if (p.currentY >= GATE_OUTSIDE_Y && !departedPatients.contains(p)) {
                         departedPatients.add(p);
                         dischargedCount++;
+                        addPop(p, "HOME!", new Color(245, 200, 112));
+                        playSound("cheer");
                         score += 75;
+                        if (p.vip) {
+                            currencyPoints += 400;
+                            score += 200;
+                            addNotice(nameOf(p) + " is home safe and rewards the shelter: +400 pts, +200 score!", new Color(245, 200, 112));
+                        }
                         String msg = nameOf(p) + " completed " + QUARANTINE_DAYS + " days of quarantine and has left the facility!";
                         currentEvent = msg + " (+75)";
                         addNotice(msg + "  +75", new Color(132, 214, 165));
@@ -3867,6 +4419,11 @@ public class Program {
                 boolean inRoom = travelTo(p, true, p.roomFloor, p.roomX, p.roomY, 1.2f);
                 if (inRoom) {
                     p.escorted = false;
+                    if (p.carryingLoot) {
+                        p.carryingLoot = false;
+                        medicine += 25;
+                        addNotice("The guard got the bag back: +25 medicine.", new Color(245, 200, 112));
+                    }
                     p.roamTimer = nowMs + 20000;
                     p.nextEscapeMillis = nowMs + 120_000L + p.rand.nextInt(60_000);
                     addNotice(nameOf(p) + " is back in their room.", new Color(132, 214, 165));
@@ -3885,6 +4442,7 @@ public class Program {
                     }
                     if (atGate && !p.isInside) {        // no guard came: the locked gate stops them
                         p.escaping = false;
+                        p.carryingLoot = false;
                         p.roamTimer = nowMs;
                         p.nextEscapeMillis = nowMs + 90_000L + p.rand.nextInt(60_000);
                         addNotice(nameOf(p) + " found the gate locked and gave up.", new Color(245, 200, 112));
@@ -3920,10 +4478,11 @@ public class Program {
                 return;
             }
             if (p.playState != 0 && updatePlay(p, nowMs)) return;   // busy with a game / chat
+            if (updateCanteen(p, nowMs)) return;                    // eating at the canteen
 
             // Restless residents try to leave every now and then (not during the tutorial)
             if (!tutorialActive && p.restless && p.need.equals("HEALTHY") && !p.orderedToRoom && p.hp >= 30f
-                    && nowMs >= p.nextEscapeMillis) {
+                    && nowMs >= p.nextEscapeMillis - (blackoutActive() ? 60_000L : 0L)) {
                 p.escaping = true;
                 p.nextEscapeMillis = nowMs + 120_000L;
                 String msg = nameOf(p) + " is trying to sneak out through the gate!";
@@ -3946,6 +4505,7 @@ public class Program {
             if (nowMs - p.roamTimer > 6000) {
                 p.roamTimer = nowMs;
                 if (p.rand.nextDouble() < 0.30 && tryStartPlay(p, nowMs)) return;
+                if (p.rand.nextDouble() < 0.15 && p.canteenState == 0 && nowMs >= p.nextCanteenMillis && food >= 20 && water >= 20 && startCanteen(p, true, nowMs)) return;
                 double r = p.rand.nextDouble();
                 if (r < 0.40) {                              // rest in their own room
                     sendPatientToDestination(p, true, p.roomFloor, new float[]{p.roomX, p.roomY});
@@ -4022,7 +4582,7 @@ public class Program {
             for (DoctorData d : doctors) {
                 if (d.treatStartMillis != 0L) continue;
                 double dist = Math.hypot(d.posX - overseerX, d.currentY - overseerY) + (d.isInside != ovIn ? 300 : 0)
-                        + (ovIn && d.floor != currentFloor ? 150 : 0) + (d.state == 1 ? 120 : 0);
+                        + (ovIn && (d.floor != currentFloor || d.ward != currentWard()) ? 150 : 0) + (d.state == 1 ? 120 : 0);
                 if (dist < bestDist) {
                     bestDist = dist;
                     best = d;
@@ -4048,8 +4608,8 @@ public class Program {
             if (isStorageRoom()) return false;
             PatientData best = null;
             for (PatientData p : patients) {
-                if (p.need.equals("HEALTHY") || p.leaving || p.arriving || p.exiting || isTargetedByOtherDoctor(p, d)) continue;
-                if (p.isInside != ovIn || (ovIn && p.floor != currentFloor)) continue;
+                if (p.need.equals("HEALTHY") || p.leaving || p.arriving || p.exiting || p.canteenState != 0 || isTargetedByOtherDoctor(p, d)) continue;
+                if (p.isInside != ovIn || (ovIn && (p.floor != currentFloor || p.ward != currentWard()))) continue;
                 if (Math.hypot(p.posX - refX, p.currentY - refY) > 190.0) continue;
                 if (best == null || p.hp < best.hp) best = p;
             }
@@ -4071,7 +4631,7 @@ public class Program {
             boolean ovIn = insideBuilding != null && !storage;
             float refX = storage ? TRASH_DOOR_X : overseerX;
             float refY = storage ? TRASH_DOOR_Y + 30f : overseerY;
-            boolean sameSpace = d.isInside == ovIn && (!ovIn || d.floor == currentFloor);
+            boolean sameSpace = d.isInside == ovIn && (!ovIn || (d.floor == currentFloor && d.ward == currentWard()));
             double dist = sameSpace ? Math.hypot(d.posX - refX, d.currentY - refY) : Double.MAX_VALUE;
             boolean arrived = dist < 50.0;
             if (arrived) d.trailing = false;
@@ -4082,7 +4642,7 @@ public class Program {
                     d.trailing = false;
                     return;
                 }
-                travelTo(d, ovIn, ovIn ? currentFloor : 1, refX + (storage ? 0f : 28f), refY, 1.9f);
+                travelTo(d, ovIn, ovIn ? currentFloor : 1, ovIn ? currentWard() : d.ward, refX + (storage ? 0f : 28f), refY, 1.9f);
                 return;
             }
             if (!d.calledReported) {
@@ -4154,7 +4714,7 @@ public class Program {
                 PatientData best = null;
                 float bestScore = Float.MAX_VALUE;
                 for (PatientData p : patients) {
-                    if (p.need.equals("HEALTHY") || isTargetedByOtherDoctor(p, d) || !suppliesFor(p.need)) continue;
+                    if (p.need.equals("HEALTHY") || p.canteenState != 0 || isTargetedByOtherDoctor(p, d) || !suppliesFor(p.need) || !priorityAllows(p)) continue;
                     assignRoom(p);
                     boolean inRoom = p.isInside && p.floor == p.roomFloor
                             && Math.hypot(p.posX - p.roomX, p.currentY - p.roomY) <= 24f;
@@ -4176,7 +4736,7 @@ public class Program {
                     // Go to the patient's ward room and wait beside the bed for them to get there
                     assignRoom(tp);
                     float[] spot = roomDoctorSpot(tp.roomIndex);
-                    boolean arrived = travelTo(d, true, tp.roomFloor, spot[0], spot[1], 1.5f);
+                    boolean arrived = travelTo(d, true, tp.roomFloor, tp.ward, spot[0], spot[1], 1.5f);
                     boolean patientInRoom = tp.isInside && tp.floor == tp.roomFloor
                             && Math.hypot(tp.posX - tp.roomX, tp.currentY - tp.roomY) <= 24f;
                     if (arrived) {
@@ -4200,6 +4760,12 @@ public class Program {
                 } else if (nowMs - d.treatStartMillis >= d.treatLength) {
                     // Treatment finished
                     String curedNeed = tp.need;
+                    daySupplies += curedNeed.equals("HUNGRY") ? costFood() : curedNeed.equals("THIRSTY") ? costWater()
+                            : curedNeed.equals("SICK") ? costMedicine() : 0;
+                    dayTreated++;
+                    addPop(tp, "+HEALED", new Color(132, 214, 165));
+                    playSound("chime");
+                    checkDailyGoals();
                     if (curedNeed.equals("HUNGRY")) food = Math.max(0, food - costFood());
                     else if (curedNeed.equals("THIRSTY")) water = Math.max(0, water - costWater());
                     else if (curedNeed.equals("SICK")) medicine = Math.max(0, medicine - costMedicine());
@@ -4555,10 +5121,751 @@ public class Program {
             }
         }
 
+        // ---------- DAILY GOALS, DAWN SUMMARY + DECISION EVENTS ----------
+        private static class DailyGoal { String text; int type; int target; int reward; boolean done; }
+        private final List<DailyGoal> dailyGoals = new ArrayList<>();
+        private int dayTreated, daySwept, dayMopped, dayChats, daySupplies;
+        private int dayStartScore = 300, dayStartLost = 0, dayStartDischarged = 0;
+        private final Random eventRandom = new Random();
+
+        // the summary card shown at every dawn
+        private boolean summaryOpen = false;
+        private long cardStartMillis = 0L;
+        private int summaryDay, sumTreated, sumLost, sumDischarged, sumSupplies, sumScore;
+        private final List<String> summaryLines = new ArrayList<>();
+
+        // a decision card: an event that makes the player pick one of a few options
+        private static class EventOption { String label, detail; Runnable effect; boolean enabled = true; String disabledReason = ""; }
+        private static class EventCard { String title, text; Color color; final List<EventOption> options = new ArrayList<>(); }
+        private EventCard decisionCard = null;
+        private EventCard pendingCard = null;          // shown right after the dawn summary is closed
+        private int decisionRow = 0;
+        private int lastEventType = -1;
+
+        // lasting effects of the choices
+        private int priorityWard = -1;                 // outbreak: doctors look after this ward first until the next dawn (-1 = no focus)
+        private boolean lateTruckPending = false;      // the delayed supply truck is still on its way
+        private boolean blackoutTonight = false;       // storm: no generator, tonight is pitch black
+        private boolean stormDay = false;
+        private long runawayAtSeconds = -1;            // seconds left on the clock when a runaway event should fire (-1 = none today)
+
+        private boolean cardOpen() { return summaryOpen || decisionCard != null; }
+
+        // ---- daily goals ----
+        private int goalProgress(DailyGoal g) {
+            switch (g.type) {
+                case 0: return dayTreated;
+                case 2: return daySwept;
+                case 3: return dayChats;
+                case 4: return dayMopped;
+                default: return 0;
+            }
+        }
+
+        private void rollDailyGoals() {
+            dailyGoals.clear();
+            dayTreated = daySwept = dayMopped = dayChats = daySupplies = 0;
+            dayStartScore = score;
+            dayStartLost = lostCount;
+            dayStartDischarged = dischargedCount;
+            List<Integer> pool = new ArrayList<>(Arrays.asList(0, 1, 2, 3));
+            if (weather == WEATHER_RAIN || stormDay) pool.add(4);          // only ask for mopping when there is rain about
+            if (day <= 1) pool.remove(Integer.valueOf(1));
+            Collections.shuffle(pool, eventRandom);
+            if (day <= 1) pool.remove(Integer.valueOf(0));                   // keep day 1 relaxed: chat and sweep
+            for (int i = 0; i < Math.min(2, pool.size()); i++) {
+                DailyGoal g = new DailyGoal();
+                g.type = pool.get(i);
+                switch (g.type) {
+                    case 0: g.target = 3 + day / 3; g.text = "Treat " + g.target + " patients"; g.reward = 80; break;
+                    case 1: g.target = 1; g.text = "Lose nobody today"; g.reward = 120; break;
+                    case 2: g.target = 2 + day / 8; g.text = "Sweep " + g.target + " leaf piles"; g.reward = 60; break;
+                    case 3: g.target = 3; g.text = "Chat with " + g.target + " residents"; g.reward = 50; break;
+                    default: g.target = 2; g.text = "Mop " + g.target + " puddles"; g.reward = 70; break;
+                }
+                dailyGoals.add(g);
+            }
+        }
+
+        private void checkDailyGoals() {
+            for (DailyGoal g : dailyGoals) {
+                if (g.done || g.type == 1) continue;           // "lose nobody" is decided at dawn
+                if (goalProgress(g) >= g.target) completeGoal(g);
+            }
+        }
+
+        private void completeGoal(DailyGoal g) {
+            g.done = true;
+            currencyPoints += g.reward;
+            score += g.reward;
+            playSound("goal");
+            addNotice("Goal complete: " + g.text + "   +" + g.reward + " pts", new Color(245, 200, 112));
+        }
+
+        /** First thing at dawn: settle the goals and freeze the figures of the day that just ended into the summary card. */
+        private void finishDayStats() {
+            int lostToday = lostCount - dayStartLost;
+            for (DailyGoal g : dailyGoals) {
+                if (g.type == 1 && !g.done && lostToday == 0) completeGoal(g);
+            }
+            summaryDay = day;
+            sumTreated = dayTreated;
+            sumLost = lostToday;
+            sumDischarged = dischargedCount - dayStartDischarged;
+            sumSupplies = daySupplies;
+            sumScore = score - dayStartScore;
+            summaryLines.clear();
+            for (DailyGoal g : dailyGoals) {
+                summaryLines.add((g.done ? "[x] " : "[ ] ") + g.text + (g.done ? "   +" + g.reward + " pts"
+                        : g.type == 1 ? "   (someone was lost)" : "   " + Math.min(goalProgress(g), g.target) + "/" + g.target));
+            }
+        }
+
+        private void openSummary() {
+            summaryOpen = true;
+            cardStartMillis = System.currentTimeMillis();
+            talkTarget = null;
+            storagePanelOpen = false;
+            hirePanelOpen = false;
+        }
+
+        private void closeSummary() {
+            if (!summaryOpen) return;
+            shiftTimers(System.currentTimeMillis() - cardStartMillis);
+            summaryOpen = false;
+            if (pendingCard != null) {
+                EventCard c = pendingCard;
+                pendingCard = null;
+                openDecision(c);
+            }
+        }
+
+        private void openDecision(EventCard card) {
+            playSound("event");
+            decisionCard = card;
+            decisionRow = 0;
+            cardStartMillis = System.currentTimeMillis();
+            talkTarget = null;
+            storagePanelOpen = false;
+            hirePanelOpen = false;
+        }
+
+        private void chooseDecision(int index) {
+            if (decisionCard == null || index < 0 || index >= decisionCard.options.size()) return;
+            if (System.currentTimeMillis() - cardStartMillis < 500L) return;          // no accidental key-mashing
+            EventOption o = decisionCard.options.get(index);
+            if (!o.enabled) {
+                currentEvent = o.disabledReason;
+                return;
+            }
+            shiftTimers(System.currentTimeMillis() - cardStartMillis);
+            decisionCard = null;
+            o.effect.run();
+        }
+
+        /** Keys while a summary / decision card is open. */
+        private void cardKey(int keyCode) {
+            if (summaryOpen) {
+                if (System.currentTimeMillis() - cardStartMillis < 400L) return;
+                if (keyCode == KeyEvent.VK_E || keyCode == KeyEvent.VK_ENTER || keyCode == KeyEvent.VK_SPACE) closeSummary();
+                return;
+            }
+            if (decisionCard == null) return;
+            int n = decisionCard.options.size();
+            switch (keyCode) {
+                case KeyEvent.VK_W:
+                case KeyEvent.VK_UP:
+                    decisionRow = (decisionRow + n - 1) % n;
+                    break;
+                case KeyEvent.VK_S:
+                case KeyEvent.VK_DOWN:
+                    decisionRow = (decisionRow + 1) % n;
+                    break;
+                case KeyEvent.VK_1: chooseDecision(0); break;
+                case KeyEvent.VK_2: chooseDecision(1); break;
+                case KeyEvent.VK_3: chooseDecision(2); break;
+                case KeyEvent.VK_E:
+                case KeyEvent.VK_ENTER:
+                case KeyEvent.VK_SPACE:
+                    chooseDecision(decisionRow);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        // ---- the events ----
+        private int healthyInWard(int ward) {
+            int n = 0;
+            for (PatientData p : patients) if (p.ward == ward && !p.arriving && !p.leaving && p.need.equals("HEALTHY")) n++;
+            return n;
+        }
+
+        private PatientData pickRunawayCandidate() {
+            List<PatientData> c = new ArrayList<>();
+            for (PatientData p : patients) {
+                if (p.restless && p.need.equals("HEALTHY") && !p.arriving && !p.leaving && !p.escaping && !p.escorted
+                        && p.hp >= 40f && p.canteenState == 0 && !p.resting) c.add(p);
+            }
+            return c.isEmpty() ? null : c.get(eventRandom.nextInt(c.size()));
+        }
+
+        private EventOption option(String label, String detail, Runnable effect) {
+            EventOption o = new EventOption();
+            o.label = label;
+            o.detail = detail;
+            o.effect = effect;
+            return o;
+        }
+
+        /** Chooses (or declines to choose) today's decision event. Returns null when it is a quiet day. */
+        private EventCard rollDawnEvent() {
+            if (day < 4 || day > WIN_DAYS || eventRandom.nextFloat() > 0.55f) return null;
+            List<Integer> types = new ArrayList<>(Arrays.asList(0, 1, 2, 3, 4));
+            types.remove(Integer.valueOf(lastEventType));
+            Collections.shuffle(types, eventRandom);
+            for (int type : types) {
+                if (type == 4) {            // runaway: no card at dawn, it happens later in the day
+                    if (pickRunawayCandidate() == null) continue;
+                    runawayAtSeconds = 90 + eventRandom.nextInt(120);
+                    lastEventType = 4;
+                    return null;
+                }
+                EventCard card = buildEvent(type);
+                if (card != null) {
+                    lastEventType = type;
+                    return card;
+                }
+            }
+            return null;
+        }
+
+        private EventCard buildEvent(int type) {
+            EventCard c = new EventCard();
+            switch (type) {
+                case 0: {   // the supply truck is late
+                    c.title = "THE SUPPLY TRUCK IS LATE";
+                    c.text = "A road closure is holding up today's delivery. You have to decide how to bridge the gap.";
+                    c.color = new Color(240, 140, 95);
+                    lateTruckPending = true;
+                    supplyTruckActive = false;
+                    c.options.add(option("Ration and wait", "The full delivery arrives late in the day. Until then you only have what is already on hand.", () -> {
+                        showEventResult("Rationing: the truck should arrive late in the day.");
+                    }));
+                    EventOption express = option("Pay for an express courier  (-150 pts)", "70% of the delivery reaches the storage room right now.", () -> {
+                        currencyPoints -= 150;
+                        lateTruckPending = false;
+                        deliverSupplies(0.7f, "Express courier");
+                        supplyTruckActive = true;
+                        supplyTruckPosX = -getArrivalTruckWidth(supplyTruckSprite);
+                    });
+                    if (currencyPoints < 150) {
+                        express.enabled = false;
+                        express.disabledReason = "Not enough supply points for the courier.";
+                    }
+                    c.options.add(express);
+                    return c;
+                }
+                case 1: {   // outbreak in one ward
+                    int ward = healthyInWard(0) >= healthyInWard(1) ? 0 : 1;
+                    if (healthyInWard(ward) < 2) return null;
+                    String needs[] = {"HUNGRY", "THIRSTY", "SICK"};
+                    int n = 0;
+                    final List<PatientData> sick = new ArrayList<>();
+                    for (PatientData p : patients) {
+                        if (n >= 3 + day / 10) break;
+                        if (p.ward == ward && !p.arriving && !p.leaving && p.need.equals("HEALTHY")) {
+                            p.need = "SICK";
+                            p.needTimer = System.currentTimeMillis();
+                            sick.add(p);
+                            n++;
+                        }
+                    }
+                    final int w = ward, other = 1 - ward;
+                    c.title = "OUTBREAK IN WARD " + (ward + 1);
+                    c.text = n + " residents in Ward " + (ward + 1) + " fell ill overnight. Your doctors cannot cover both wards at once.";
+                    c.color = new Color(226, 90, 80);
+                    c.options.add(option("Doctors to Ward " + (w + 1), "They treat the outbreak first. Residents in Ward " + (other + 1) + " get worse faster today.", () -> {
+                        priorityWard = w;
+                        showEventResult("Doctors are focusing on Ward " + (w + 1) + " until dawn.");
+                    }));
+                    c.options.add(option("Doctors to Ward " + (other + 1), "Ward " + (other + 1) + " stays safe, but the outbreak in Ward " + (w + 1) + " is left to run.", () -> {
+                        priorityWard = other;
+                        showEventResult("Doctors are focusing on Ward " + (other + 1) + " until dawn.");
+                    }));
+                    EventOption meds = option("Emergency medicine  (-40 medicine)", "Treats every sick resident right now, and the doctors stay free.", () -> {
+                        medicine -= 40;
+                        for (PatientData sp : sick) {
+                            if (sp.need.equals("SICK")) {
+                                sp.need = "HEALTHY";
+                                sp.hp = Math.min(100f, sp.hp + 15f);
+                                sp.needTimer = System.currentTimeMillis();
+                            }
+                        }
+                        showEventResult("The outbreak was stopped with emergency medicine.");
+                    });
+                    if (medicine < 40) {
+                        meds.enabled = false;
+                        meds.disabledReason = "Not enough medicine on the supply line (need 40).";
+                    }
+                    c.options.add(meds);
+                    return c;
+                }
+                case 2: {   // storm: blackout tonight
+                    c.title = "STORM WARNING";
+                    c.text = "A storm is rolling in and the grid will fail tonight. Rain all day means puddles to mop.";
+                    c.color = new Color(105, 186, 225);
+                    stormDay = true;
+                    weather = WEATHER_RAIN;
+                    nextWeatherChangeMillis = System.currentTimeMillis() + 150_000L;
+                    nextPuddleMillis = System.currentTimeMillis() + 1000L;
+                    EventOption gen = option("Fuel the generator  (-60 materials)", "The lights stay on all night.", () -> {
+                        materials -= 60;
+                        blackoutTonight = false;
+                        showEventResult("Generator fuelled - the lights will stay on tonight.");
+                    });
+                    if (materials < 60) {
+                        gen.enabled = false;
+                        gen.disabledReason = "Not enough materials for the generator (need 60).";
+                    }
+                    c.options.add(gen);
+                    c.options.add(option("Save the materials", "Tonight is pitch black and restless residents try to slip out much more often.", () -> {
+                        blackoutTonight = true;
+                        showEventResult("No generator: expect a dark, dangerous night.");
+                    }));
+                    return c;
+                }
+                case 3: {   // a VIP with demands
+                    c.title = "A VIP WANTS A BED";
+                    c.text = "A wealthy donor asks to be quarantined here. They will be demanding, but the reward is real.";
+                    c.color = new Color(245, 200, 112);
+                    c.options.add(option("Accept the VIP", "+400 pts and +200 score if they go home healthy. They fall ill twice as often, and -300 score if they die.", () -> {
+                        PatientData vip = new PatientData(nextPatientId++, 700, GATE_OUTSIDE_Y, false, 1);
+                        vip.arrivalDay = day;
+                        vip.arriving = true;
+                        vip.vip = true;
+                        patients.add(vip);
+                        ensurePatientTraits(vip);
+                        vip.name = "VIP " + vip.name;
+                        showEventResult(vip.name + " is arriving at the gate.");
+                    }));
+                    c.options.add(option("Politely decline", "No risk and no reward.", () -> showEventResult("You turned the VIP away.")));
+                    return c;
+                }
+                default:
+                    return null;      // (the runaway event is scheduled in rollDawnEvent and fires mid-day)
+            }
+        }
+
+        private void showEventResult(String text) {
+            currentEvent = text;
+            addNotice(text, new Color(245, 200, 112));
+        }
+
+        /** The mid-day event: somebody bolts for the gate with a bag of stolen supplies. */
+        private void fireRunawayEvent() {
+            runawayAtSeconds = -1;
+            final PatientData p = pickRunawayCandidate();
+            if (p == null) return;
+            final String name = nameOf(p);
+            EventCard c = new EventCard();
+            c.title = name.toUpperCase() + " IS MAKING A RUN FOR IT";
+            c.text = cap(heOf(p)) + " grabbed a bag of medicine from the supply line. The guards cannot do both: chase, or hold the gate.";
+            c.color = new Color(240, 150, 110);
+            c.options.add(option("Send a guard after " + himOf(p), "Get the bag back (+25 medicine) - but with the gate unwatched, two more residents may try to slip out.", () -> {
+                p.escaping = true;
+                p.carryingLoot = true;
+                p.nextEscapeMillis = System.currentTimeMillis();
+                int extra = 0;
+                for (PatientData o : patients) {
+                    if (extra >= 2) break;
+                    if (o != p && o.restless && o.need.equals("HEALTHY") && !o.arriving && !o.leaving) {
+                        o.nextEscapeMillis = System.currentTimeMillis() + 15_000L + o.rand.nextInt(25_000);
+                        extra++;
+                    }
+                }
+                showEventResult("A guard is chasing " + name + ".");
+            }));
+            c.options.add(option("Hold the gate", "Nobody else gets out, but " + name + " walks away with the medicine (-25 medicine, -60 score).", () -> {
+                medicine = Math.max(0, medicine - 25);
+                score -= 60;
+                patients.remove(p);
+                showEventResult(name + " slipped away with the medicine. The gate held.");
+            }));
+            openDecision(c);
+        }
+
+        private boolean blackoutActive() { return blackoutTonight && darkness() >= 0.45; }
+
+        /** Does the outbreak focus allow doctors to start on this patient right now? */
+        private boolean priorityAllows(PatientData p) {
+            if (priorityWard < 0 || p.ward == priorityWard) return true;
+            for (PatientData o : patients) {
+                if (o.ward == priorityWard && !o.need.equals("HEALTHY") && !o.leaving && !o.arriving) return false;
+            }
+            return true;
+        }
+
+        private void deliverSupplies(float factor, String who) {
+            StringBuilder delivered = new StringBuilder();
+            int residentsNow = 0;
+            for (PatientData rp : patients) if (!rp.leaving) residentsNow++;
+            for (int item = 0; item < 4; item++) {
+                int room = STORAGE_CAPACITY - storedStock[item];
+                int added = Math.max(0, Math.min(Math.round(dailyDelivery(item, residentsNow) * factor), room));
+                storedStock[item] += added;
+                delivered.append(added).append(' ').append(STORAGE_ITEM_NAMES[item].toLowerCase()).append(item < 3 ? ", " : "");
+            }
+            addNotice(who + " delivered to the storage room: " + delivered + ".", new Color(245, 200, 112));
+        }
+
+        // ---- drawing ----
+        private void renderGoalsCard(Graphics2D g) {
+            if (dailyGoals.isEmpty() || insideBuilding != null) return;
+            int x = 24, y = 181, w = 300, h = 22 + dailyGoals.size() * 17;
+            g.setColor(new Color(8, 15, 23, 190));
+            g.fillRoundRect(x, y, w, h, 9, 9);
+            g.setFont(new Font("SansSerif", Font.BOLD, 9));
+            g.setColor(new Color(244, 183, 127));
+            g.drawString("TODAY'S GOALS", x + 12, y + 14);
+            int ly = y + 31;
+            for (DailyGoal dg : dailyGoals) {
+                g.setColor(dg.done ? new Color(132, 214, 165) : new Color(222, 230, 228));
+                String prog = dg.type == 1 ? "" : "  " + Math.min(goalProgress(dg), dg.target) + "/" + dg.target;
+                drawFittedString(g, (dg.done ? "[x] " : "[ ] ") + dg.text + prog + "  (+" + dg.reward + ")", x + 12, ly, w - 20,
+                        new Font("SansSerif", Font.PLAIN, 11));
+                ly += 17;
+            }
+        }
+
+        private void renderCardFrame(Graphics2D g, int w, int h, Color accent) {
+            g.setColor(new Color(0, 0, 0, 170));
+            g.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+            int x = (WORLD_WIDTH - w) / 2, y = (WORLD_HEIGHT - h) / 2;
+            g.setPaint(new GradientPaint(x, y, new Color(15, 27, 40, 252), x, y + h, new Color(20, 36, 49, 250)));
+            g.fillRoundRect(x, y, w, h, 16, 16);
+            g.setColor(new Color(104, 148, 159, 190));
+            g.drawRoundRect(x, y, w, h, 16, 16);
+            g.setColor(accent);
+            g.fillRoundRect(x, y, w, 5, 8, 8);
+        }
+
+        private void renderSummary(Graphics2D g) {
+            int w = 560, h = 420, x = (WORLD_WIDTH - w) / 2, y = (WORLD_HEIGHT - h) / 2;
+            renderCardFrame(g, w, h, new Color(244, 153, 75));
+            g.setFont(new Font("SansSerif", Font.BOLD, 24));
+            g.setColor(new Color(244, 244, 236));
+            g.drawString("DAY " + summaryDay + " COMPLETE", x + 28, y + 46);
+            g.setFont(new Font("SansSerif", Font.PLAIN, 12));
+            g.setColor(new Color(163, 188, 196));
+            g.drawString(summaryDay == 1 ? "A calm first day - well done, Overseer. It gets busier from here."
+                    : "Day " + day + " of " + WIN_DAYS + " begins  -  " + lostCount + " / " + LOSE_DEATHS + " residents lost so far", x + 28, y + 68);
+            String[] labels = {"TREATED", "LOST", "SENT HOME", "SUPPLIES USED", "SCORE"};
+            String[] vals = {String.valueOf(sumTreated), String.valueOf(sumLost), String.valueOf(sumDischarged),
+                    String.valueOf(sumSupplies), (sumScore >= 0 ? "+" : "") + sumScore};
+            Color[] cols = {new Color(132, 214, 165), sumLost > 0 ? new Color(240, 110, 95) : new Color(213, 231, 235),
+                    new Color(132, 207, 228), new Color(215, 184, 126), new Color(236, 224, 190)};
+            for (int i = 0; i < labels.length; i++) {
+                int cx = x + 28 + i * 104;
+                g.setFont(new Font("SansSerif", Font.BOLD, 9));
+                g.setColor(new Color(151, 177, 188));
+                g.drawString(labels[i], cx, y + 104);
+                g.setFont(new Font("SansSerif", Font.BOLD, 24));
+                g.setColor(cols[i]);
+                g.drawString(vals[i], cx, y + 134);
+            }
+            g.setColor(new Color(92, 119, 132, 150));
+            g.drawLine(x + 28, y + 154, x + w - 28, y + 154);
+            g.setFont(new Font("SansSerif", Font.BOLD, 11));
+            g.setColor(new Color(244, 183, 127));
+            g.drawString("YESTERDAY'S GOALS", x + 28, y + 178);
+            int ly = y + 204;
+            for (String line : summaryLines) {
+                g.setFont(new Font("SansSerif", Font.PLAIN, 14));
+                g.setColor(line.startsWith("[x]") ? new Color(132, 214, 165) : new Color(200, 208, 206));
+                g.drawString(line, x + 28, ly);
+                ly += 24;
+            }
+            g.setFont(new Font("SansSerif", Font.BOLD, 11));
+            g.setColor(new Color(244, 183, 127));
+            g.drawString("Residents arriving today: " + newPatientsToday() + (pendingCard != null ? "     An event needs your decision." : ""), x + 28, y + h - 62);
+            g.setColor(new Color(151, 177, 188));
+            g.drawString("E / ENTER  CONTINUE", x + 28, y + h - 32);
+        }
+
+        private void renderDecision(Graphics2D g) {
+            EventCard c = decisionCard;
+            int rowH = 74, w = 640, h = 150 + c.options.size() * (rowH + 8) + 36;
+            int x = (WORLD_WIDTH - w) / 2, y = (WORLD_HEIGHT - h) / 2;
+            renderCardFrame(g, w, h, c.color);
+            g.setFont(new Font("SansSerif", Font.BOLD, 11));
+            g.setColor(c.color);
+            g.drawString("EVENT  -  DAY " + day, x + 28, y + 34);
+            g.setFont(new Font("SansSerif", Font.BOLD, 24));
+            g.setColor(new Color(244, 244, 236));
+            drawFittedString(g, c.title, x + 28, y + 66, w - 56, new Font("SansSerif", Font.BOLD, 24));
+            g.setFont(new Font("SansSerif", Font.PLAIN, 13));
+            g.setColor(new Color(190, 205, 208));
+            int ty = y + 94;
+            for (String line : wrapText(g, c.text, w - 56)) {
+                g.drawString(line, x + 28, ty);
+                ty += 18;
+            }
+            int oy = y + 138;
+            for (int i = 0; i < c.options.size(); i++) {
+                EventOption o = c.options.get(i);
+                boolean sel = i == decisionRow;
+                g.setColor(sel ? new Color(40, 66, 84, 245) : new Color(24, 40, 54, 235));
+                g.fillRoundRect(x + 24, oy, w - 48, rowH, 12, 12);
+                g.setColor(sel ? c.color : new Color(86, 112, 126, 200));
+                g.drawRoundRect(x + 24, oy, w - 48, rowH, 12, 12);
+                g.setFont(new Font("SansSerif", Font.BOLD, 11));
+                g.setColor(o.enabled ? c.color : new Color(110, 120, 126));
+                g.drawString(String.valueOf(i + 1), x + 40, oy + 28);
+                g.setColor(o.enabled ? new Color(244, 244, 236) : new Color(120, 130, 136));
+                drawFittedString(g, o.label, x + 62, oy + 28, w - 120, new Font("SansSerif", Font.BOLD, 16));
+                g.setColor(o.enabled ? new Color(163, 188, 196) : new Color(120, 130, 136));
+                int dy = oy + 48;
+                for (String line : wrapText(g, o.enabled ? o.detail : o.disabledReason, w - 120)) {
+                    g.setFont(new Font("SansSerif", Font.PLAIN, 12));
+                    g.drawString(line, x + 62, dy);
+                    dy += 15;
+                }
+                oy += rowH + 8;
+            }
+            g.setFont(new Font("SansSerif", Font.BOLD, 11));
+            g.setColor(new Color(151, 177, 188));
+            g.drawString("W / S  SELECT        1 / 2 / 3  OR  E  CHOOSE", x + 28, y + h - 18);
+        }
+
+        private List<String> wrapText(Graphics2D g, String text, int maxWidth) {
+            List<String> lines = new ArrayList<>();
+            g.setFont(new Font("SansSerif", Font.PLAIN, 12));
+            FontMetrics fm = g.getFontMetrics();
+            StringBuilder line = new StringBuilder();
+            for (String word : text.split(" ")) {
+                if (line.length() > 0 && fm.stringWidth(line + " " + word) > maxWidth) {
+                    lines.add(line.toString());
+                    line.setLength(0);
+                }
+                if (line.length() > 0) line.append(' ');
+                line.append(word);
+            }
+            if (line.length() > 0) lines.add(line.toString());
+            return lines;
+        }
+
+        // ---------- FLASHLIGHT BEAMS THAT WALLS AND BUILDINGS BLOCK ----------
+        /** True where a beam of light stops: building footprints, the yard wall, the gate and the fences. */
+        private boolean lightBlockedAt(double x, double y) {
+            int px = (int) Math.round(x), py = (int) Math.round(y);
+            if (py < 42) return true;
+            for (Rectangle r : buildingWalls) if (r.contains(px, py)) return true;
+            for (Rectangle r : lowerBuildingWalls) if (r.contains(px, py)) return true;
+            return bottomWallLeft.contains(px, py) || bottomWallRight.contains(px, py) || gateWall.contains(px, py)
+                    || leftWall.contains(px, py) || rightFence.contains(px, py);
+        }
+
+        /** Walks from (x0,y0) towards (x1,y1) and returns how far (0..1) the light gets before it hits something. */
+        private double lightReach(double x0, double y0, double x1, double y1) {
+            double len = Math.hypot(x1 - x0, y1 - y0);
+            int steps = Math.max(1, (int) Math.ceil(len / 4.0));
+            for (int i = 1; i <= steps; i++) {
+                double t = i / (double) steps;
+                if (lightBlockedAt(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t)) return (i - 1) / (double) steps;
+            }
+            return 1.0;
+        }
+
+        /** The flashlight cone as a polygon, cut short wherever a wall or building is in the way. */
+        private java.awt.Polygon beamPolygon(double originX, double originY, double dx, double dy) {
+            double px = -dy, py = dx;
+            final int rays = 12;
+            java.awt.Polygon poly = new java.awt.Polygon();
+            poly.addPoint((int) (originX - px * 7), (int) (originY - py * 7));
+            for (int i = 0; i <= rays; i++) {
+                double t = -1.0 + 2.0 * i / rays;
+                double nx = originX + px * 7 * t, ny = originY + py * 7 * t;
+                double fx = originX + dx * 150 + px * 42 * t, fy = originY + dy * 150 + py * 42 * t;
+                double reach = lightReach(nx, ny, fx, fy);
+                poly.addPoint((int) (nx + (fx - nx) * reach), (int) (ny + (fy - ny) * reach));
+            }
+            poly.addPoint((int) (originX + px * 7), (int) (originY + py * 7));
+            return poly;
+        }
+
+        // ---------- SOUND (generated in code - no audio files needed; press M to mute) ----------
+        private boolean soundOn = true, soundBroken = false;
+        private static final float SFX_RATE = 22050f;
+        private final java.util.Map<String, javax.sound.sampled.Clip> sfxClips = new java.util.HashMap<>();
+        private javax.sound.sampled.Clip rainClip, cricketClip;
+        private long lastStepSoundMillis = 0L;
+
+        private byte[] synthTones(double[][] notes) {     // {frequency (0 = rest), millis, wave (0 sine / 1 square / 2 noise), volume}
+            int total = 0;
+            for (double[] n : notes) total += (int) (SFX_RATE * n[1] / 1000.0);
+            byte[] out = new byte[total * 2];
+            int pos = 0;
+            Random noise = new Random(11);
+            double lp = 0;
+            for (double[] n : notes) {
+                int len = (int) (SFX_RATE * n[1] / 1000.0);
+                for (int i = 0; i < len; i++) {
+                    double t = i / (double) SFX_RATE;
+                    double env = Math.min(1.0, i / (SFX_RATE * 0.006)) * Math.min(1.0, (len - i) / (SFX_RATE * 0.04));
+                    double wave;
+                    if (n[2] == 0) wave = Math.sin(2 * Math.PI * n[0] * t);
+                    else if (n[2] == 1) wave = Math.signum(Math.sin(2 * Math.PI * n[0] * t));
+                    else {                                         // soft noise burst = a footstep
+                        lp += (noise.nextGaussian() * 0.6 - lp) * 0.25;
+                        wave = lp * Math.exp(-t * 38);
+                    }
+                    int v = (int) (wave * env * n[3] * 32767);
+                    out[pos++] = (byte) (v & 0xFF);
+                    out[pos++] = (byte) ((v >> 8) & 0xFF);
+                }
+            }
+            return out;
+        }
+
+        private byte[] synth(String kind) {
+            switch (kind) {
+                case "step": return synthTones(new double[][]{{0, 70, 2, 0.5}});
+                case "chime": return synthTones(new double[][]{{880, 110, 0, .26}, {1320, 220, 0, .26}});
+                case "goal": return synthTones(new double[][]{{784, 90, 0, .26}, {988, 90, 0, .26}, {1319, 260, 0, .26}});
+                case "alert": return synthTones(new double[][]{{660, 130, 1, .12}, {0, 60, 0, 0}, {660, 130, 1, .12}, {0, 60, 0, 0}, {520, 220, 1, .12}});
+                case "death": return synthTones(new double[][]{{262, 260, 0, .30}, {220, 260, 0, .30}, {165, 520, 0, .30}});
+                case "horn": return synthTones(new double[][]{{140, 320, 1, .14}, {0, 90, 0, 0}, {140, 460, 1, .14}});
+                case "cheer": return synthTones(new double[][]{{523, 110, 0, .26}, {659, 110, 0, .26}, {784, 110, 0, .26}, {1047, 340, 0, .26}});
+                default: return synthTones(new double[][]{{330, 180, 1, .12}, {262, 300, 1, .12}});    // "event"
+            }
+        }
+
+        private void playSound(String kind) {
+            if (!soundOn || soundBroken) return;
+            try {
+                javax.sound.sampled.Clip clip = sfxClips.get(kind);
+                if (clip == null) {
+                    byte[] data = synth(kind);
+                    clip = javax.sound.sampled.AudioSystem.getClip();
+                    clip.open(new javax.sound.sampled.AudioFormat(SFX_RATE, 16, 1, true, false), data, 0, data.length);
+                    sfxClips.put(kind, clip);
+                }
+                if (clip.isRunning()) clip.stop();
+                clip.setFramePosition(0);
+                clip.start();
+            } catch (Throwable t) {
+                soundBroken = true;            // no audio device: stay silent
+            }
+        }
+
+        private void setClipGain(javax.sound.sampled.Clip clip, float db) {
+            try {
+                javax.sound.sampled.FloatControl c = (javax.sound.sampled.FloatControl) clip.getControl(javax.sound.sampled.FloatControl.Type.MASTER_GAIN);
+                c.setValue(Math.max(c.getMinimum(), Math.min(c.getMaximum(), db)));
+            } catch (Throwable ignored) {
+                // no volume control on this line
+            }
+        }
+
+        private javax.sound.sampled.Clip loopClip(boolean rain) throws Exception {
+            int n = (int) SFX_RATE * 3;
+            byte[] data = new byte[n * 2];
+            Random r = new Random(rain ? 5 : 9);
+            double lp = 0;
+            for (int i = 0; i < n; i++) {
+                double v;
+                if (rain) {                                       // low-passed noise = rain-like hiss
+                    lp += (r.nextGaussian() * 0.5 - lp) * 0.35;
+                    v = lp * 0.30;
+                } else {                                          // crickets: quick 4.3 kHz chirps, three in a row, then a pause
+                    double t = (i / SFX_RATE) % 1.5;
+                    double chirp = 0;
+                    for (int k = 0; k < 3; k++) {
+                        double local = t - 0.1 - k * 0.09;
+                        if (local >= 0 && local < 0.05) chirp = Math.sin(2 * Math.PI * 4300 * local) * Math.sin(Math.PI * local / 0.05);
+                    }
+                    v = chirp * 0.07;
+                }
+                int sample = (int) (v * 32767);
+                data[2 * i] = (byte) (sample & 0xFF);
+                data[2 * i + 1] = (byte) ((sample >> 8) & 0xFF);
+            }
+            javax.sound.sampled.Clip clip = javax.sound.sampled.AudioSystem.getClip();
+            clip.open(new javax.sound.sampled.AudioFormat(SFX_RATE, 16, 1, true, false), data, 0, data.length);
+            setClipGain(clip, rain ? -6f : -2f);
+            clip.loop(javax.sound.sampled.Clip.LOOP_CONTINUOUSLY);
+            return clip;
+        }
+
+        /** Rain hiss while it rains in the yard, crickets on calm nights; both stop indoors and while a menu is open. */
+        private void updateAmbient() {
+            boolean outdoors = insideBuilding == null && !pauseMenuOpen && !endScreenOpen && !cardOpen() && soundOn && !soundBroken;
+            boolean wantRain = outdoors && rainIntensity > 0.3f;
+            boolean wantCrickets = outdoors && !wantRain && darkness() > 0.55;
+            try {
+                if (wantRain && rainClip == null) rainClip = loopClip(true);
+                else if (!wantRain && rainClip != null) { rainClip.stop(); rainClip.close(); rainClip = null; }
+                if (wantCrickets && cricketClip == null) cricketClip = loopClip(false);
+                else if (!wantCrickets && cricketClip != null) { cricketClip.stop(); cricketClip.close(); cricketClip = null; }
+            } catch (Throwable t) {
+                soundBroken = true;
+                rainClip = null;
+                cricketClip = null;
+            }
+        }
+
+        // ---------- POP-UP TEXT + SCREEN SHAKE ----------
+        private static class PopText { float x, y; String text; Color color; long born; boolean inside; int ward, floor; }
+        private final List<PopText> popTexts = new CopyOnWriteArrayList<>();
+        private long shakeUntilNanos = 0L;
+
+        private void addPop(NavActor a, String text, Color color) {
+            PopText t = new PopText();
+            t.x = a.posX + PLAYER_WIDTH / 2f;
+            t.y = a.currentY - 14f;
+            t.text = text;
+            t.color = color;
+            t.born = System.currentTimeMillis();
+            t.inside = a.isInside;
+            t.ward = a.ward;
+            t.floor = a.floor;
+            popTexts.add(t);
+        }
+
+        private void renderPopTexts(Graphics2D g) {
+            long now = System.currentTimeMillis();
+            boolean outdoors = insideBuilding == null;
+            for (PopText t : popTexts) {
+                long age = now - t.born;
+                if (age > 1500L) {
+                    popTexts.remove(t);
+                    continue;
+                }
+                boolean here = outdoors ? !t.inside : (t.inside && !isStorageRoom() && t.floor == currentFloor && t.ward == currentWard());
+                if (!here) continue;
+                float k = age / 1500f;
+                int alpha = Math.max(0, Math.min(255, Math.round(255 * (1f - k * k))));
+                g.setFont(new Font("SansSerif", Font.BOLD, 13));
+                int x = Math.round(t.x) - g.getFontMetrics().stringWidth(t.text) / 2, y = Math.round(t.y - k * 34);
+                g.setColor(new Color(0, 0, 0, alpha / 2));
+                g.drawString(t.text, x + 1, y + 1);
+                g.setColor(new Color(t.color.getRed(), t.color.getGreen(), t.color.getBlue(), alpha));
+                g.drawString(t.text, x, y);
+            }
+        }
+
         private void triggerDawnEvent() {
+            playSound("horn");
+            finishDayStats();                // goals + figures of the day that just ended
             day++;
+            priorityWard = -1;
+            blackoutTonight = false;
+            stormDay = false;
+            lateTruckPending = false;
+            runawayAtSeconds = -1;
             secondsRemaining = DAY_DURATION_SECONDS;
-            supplyTruckActive = true;
+            supplyTruckActive = true;                       // a late-truck event switches this off again
             supplyTruckPosX = -getArrivalTruckWidth(supplyTruckSprite);
             garbageTruckActive = true;
             garbageTruckPosX = -getArrivalTruckWidth(garbageTruckSprite) - 220;
@@ -4593,16 +5900,8 @@ public class Program {
                 stackedTrashCount = 0;
             }
             // the supply truck unloads into the STORAGE ROOM - move it to the supply line yourself (or switch on auto-restock)
-            StringBuilder delivered = new StringBuilder();
-            for (int item = 0; item < 4; item++) {
-                int room = STORAGE_CAPACITY - storedStock[item];
-                int residentsNow = 0;
-                for (PatientData rp : patients) if (!rp.leaving) residentsNow++;
-                int added = Math.max(0, Math.min(dailyDelivery(item, residentsNow), room));
-                storedStock[item] += added;
-                delivered.append(added).append(' ').append(STORAGE_ITEM_NAMES[item].toLowerCase()).append(item < 3 ? ", " : "");
-            }
-            addNotice("Supply truck delivered to the storage room: " + delivered + ".", new Color(245, 200, 112));
+            EventCard todaysEvent = rollDawnEvent();     // may hold back the truck (late-truck event) - see buildEvent
+            if (!lateTruckPending) deliverSupplies(1.0f, "Supply truck");
             currencyPoints += 250;
             waste = Math.min(100, waste + 10);
             score += 150;
@@ -4614,6 +5913,11 @@ public class Program {
             }
             if (day > 1 && arrivals > 2 && (day - 1) % 8 == 0) {
                 addNotice("More people are being sent to the shelter now - make sure you have enough doctors and beds!", new Color(240, 140, 95));
+            }
+            rollDailyGoals();
+            if (day <= WIN_DAYS) {
+                pendingCard = todaysEvent;
+                openSummary();
             }
         }
 
@@ -4634,8 +5938,14 @@ public class Program {
                 scene.scale(scale, scale);
                 scene.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
                 scene.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                if (System.nanoTime() < shakeUntilNanos) {                       // screen shake (someone died)
+                    double k = (shakeUntilNanos - System.nanoTime()) / 450_000_000.0;
+                    scene.translate((Math.random() - 0.5) * 9 * k, (Math.random() - 0.5) * 9 * k);
+                }
                 renderFrame(scene);
                 if (talkTarget != null) renderTalkPanel(scene);
+                if (summaryOpen) renderSummary(scene);
+                if (decisionCard != null) renderDecision(scene);
                 if (pauseMenuOpen) renderPauseMenu(scene);
                 if (endScreenOpen) renderEndScreen(scene);
             } finally {
@@ -4657,24 +5967,36 @@ public class Program {
                 return;
             }
             if (insideBuilding != null) {
-                BufferedImage wardBg = currentFloor > 1 ? interiorUpperBgImage : interiorBgImage;
+                int ward = currentWard();
+                BufferedImage ownArt = currentFloor > 1 ? interiorUpperBg2Image : interiorBg2Image;
+                BufferedImage wardBg = ward == 1 && ownArt != null ? ownArt : (currentFloor > 1 ? interiorUpperBgImage : interiorBgImage);
                 if (wardBg != null) {
                     g.drawImage(wardBg, 0, 0, screenWidth, screenHeight, null);
                 } else {
                     g.setColor(new Color(35, 42, 50));
                     g.fillRect(0, 0, screenWidth, screenHeight);
                 }
+                if (ward == 1 && ownArt == null) {          // no separate art for ward 2: give it its own teal look
+                    g.setColor(new Color(40, 150, 140, 44));
+                    g.fillRect(0, 0, screenWidth, screenHeight);
+                }
+                g.setFont(new Font("SansSerif", Font.BOLD, 46));
+                g.setColor(new Color(255, 255, 255, 34));
+                g.drawString("WARD " + (ward + 1), 250, 640);
+                renderCanteen(g);
                 renderReceptionist(g);
                 for (PatientData p : patients) {
-                    if (p.isInside && p.floor == currentFloor) {
+                    if (p.isInside && p.floor == currentFloor && p.ward == ward) {
                         renderPatientWithSpriteAndHealth(g, (int) p.posX, (int) p.currentY, nameOf(p), p.need, p.hp, p.isFemale, p);
                     }
                 }
                 for (DoctorData doc : doctors) {
-                    if (doc.isInside && doc.floor == currentFloor) {
+                    if (doc.isInside && doc.floor == currentFloor && doc.ward == ward) {
                         renderDoctor(g, (int) doc.posX, (int) doc.currentY, "Dr. " + nameOf(doc), doc);
                     }
                 }
+                renderCanteenFront(g);
+                renderFloatTexts(g);
                 renderPatientGames(g, true);
                 renderOverseer(g, overseerX, overseerY);
             } else {
@@ -4731,6 +6053,8 @@ public class Program {
         }
 
         private void renderOverlays(Graphics2D g) {
+            renderPopTexts(g);
+            renderGoalsCard(g);
             renderTutorial(g);
             renderNotices(g);
         }
@@ -4791,7 +6115,8 @@ public class Program {
                 double alongBeam = toPlayerX * dx + toPlayerY * dy;
                 double acrossBeam = Math.abs(toPlayerX * -dy + toPlayerY * dx);
                 double beamHalfWidth = 7 + (42 - 7) * Math.max(0, Math.min(1, alongBeam / 150.0));
-                if (alongBeam >= 0 && alongBeam <= 150 && acrossBeam <= beamHalfWidth) return true;
+                if (alongBeam >= 0 && alongBeam <= 150 && acrossBeam <= beamHalfWidth
+                        && lightReach(originX, originY, playerX, playerY) >= 1.0) return true;       // a wall in between blocks the light
             }
             return false;
         }
@@ -4812,6 +6137,12 @@ public class Program {
             double lamp = smooth((dark - 0.3) / 0.4);          // lights fade on as it gets dark
             lighting.setColor(new Color(8, 13, 30, (int) Math.round(125 * dark)));
             lighting.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+            if (blackoutTonight && dark > 0.3) {             // storm blackout: no lamps, much darker
+                lighting.setColor(new Color(2, 4, 14, (int) Math.round(105 * dark)));
+                lighting.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+                lighting.dispose();
+                return;
+            }
             if (lamp <= 0.01) {
                 lighting.dispose();
                 return;
@@ -4839,14 +6170,7 @@ public class Program {
                 double[] origin = guardBeamOrigin(guard);
                 double originX = origin[0];
                 double originY = origin[1];
-                double px = -dy, py = dx;
-                int[] xs = {(int) (originX - px * 7),
-                        (int) (originX + dx * 150 + px * 42),
-                        (int) (originX + dx * 150 - px * 42)};
-                int[] ys = {(int) (originY - py * 7),
-                        (int) (originY + dy * 150 + py * 42),
-                        (int) (originY + dy * 150 - py * 42)};
-                lighting.fillPolygon(xs, ys, 3);
+                lighting.fillPolygon(beamPolygon(originX, originY, dx, dy));       // cut short by walls and buildings
             }
 
             for (RoadTrafficCar car : roadTraffic) {
@@ -5141,11 +6465,13 @@ public class Program {
                 patients.add(pd);
             }
             doctors.add(new DoctorData(300, 430, false, 1));
-            doctors.add(new DoctorData(400, 450, true, 2));
+            DoctorData wardTwoDoctor = new DoctorData(400, 450, true, 2);
+            wardTwoDoctor.ward = 1;
+            doctors.add(wardTwoDoctor);
             guards.add(new GuardData(208, 440));
             guards.add(new GuardData(600, 450));
             for (GuardData guard : guards) guard.flashlightAngle = Math.PI / 2;
-            for (int f = 1; f <= 3; f++) receptionists.add(new ReceptionistData(RECEPTION_X, RECEPTION_Y, f));
+            for (int w = 0; w < 2; w++) for (int f = 1; f <= 3; f++) receptionists.add(new ReceptionistData(RECEPTION_X, RECEPTION_Y, f, w));
 
             // weather and yard
             puddles.clear();
@@ -5183,6 +6509,17 @@ public class Program {
             java.util.Arrays.fill(tutTaskPressed, false);
             tutPatient = null;
 
+            popTexts.clear();
+            summaryOpen = false;
+            decisionCard = null;
+            pendingCard = null;
+            priorityWard = -1;
+            lateTruckPending = false;
+            blackoutTonight = false;
+            stormDay = false;
+            runawayAtSeconds = -1;
+            lastEventType = -1;
+            rollDailyGoals();
             currentEvent = "Welcome to Quarantine Haven! Follow the tutorial card (press T to skip it).";
             addNotice("New game started. Goal: survive " + WIN_DAYS + " days or send " + WIN_DISCHARGED + " residents home.", new Color(132, 214, 165));
         }
@@ -5208,6 +6545,9 @@ public class Program {
                 put(pr, "currentFloor", currentFloor);
                 put(pr, "nextPatientId", nextPatientId);
                 put(pr, "dischargedCount", dischargedCount);
+                put(pr, "lateTruckPending", lateTruckPending);
+                put(pr, "blackoutTonight", blackoutTonight);
+                put(pr, "priorityWard", priorityWard);
                 put(pr, "lostCount", lostCount);
                 put(pr, "memorialCount", memorial.size());
                 for (int mi = 0; mi < memorial.size(); mi++) {
@@ -5233,6 +6573,7 @@ public class Program {
                     put(pr, k + "y", pd.currentY);
                     put(pr, k + "inside", pd.isInside);
                     put(pr, k + "floor", pd.floor);
+                    put(pr, k + "ward", pd.ward);
                     put(pr, k + "need", pd.need);
                     put(pr, k + "hp", pd.hp);
                     put(pr, k + "arrivalDay", pd.arrivalDay);
@@ -5264,6 +6605,7 @@ public class Program {
                     put(pr, k + "y", dd.currentY);
                     put(pr, k + "inside", dd.isInside);
                     put(pr, k + "floor", dd.floor);
+                    put(pr, k + "ward", dd.ward);
                     put(pr, k + "name", nameOf(dd));
                     put(pr, k + "likes", likesOf(dd));
                     n++;
@@ -5275,6 +6617,7 @@ public class Program {
                     put(pr, k + "x", (gd.inStorage || gd.carrying) ? TRASH_DOOR_X : gd.posX);
                     put(pr, k + "y", (gd.inStorage || gd.carrying) ? TRASH_DOOR_Y : gd.currentY);
                     put(pr, k + "angle", gd.flashlightAngle);
+                    put(pr, k + "duty", gd.duty);
                     put(pr, k + "name", nameOf(gd));
                     put(pr, k + "likes", likesOf(gd));
                     n++;
@@ -5328,6 +6671,9 @@ public class Program {
                 stackedTrashCount = getI(pr, "stackedTrashCount", 0);
                 nextPatientId = getI(pr, "nextPatientId", nextPatientId);
                 dischargedCount = getI(pr, "dischargedCount", 0);
+                lateTruckPending = getB(pr, "lateTruckPending", false);
+                blackoutTonight = getB(pr, "blackoutTonight", false);
+                priorityWard = getI(pr, "priorityWard", -1);
                 lostCount = getI(pr, "lostCount", 0);
                 memorial.clear();
                 int memCount = getI(pr, "memorialCount", 0);
@@ -5372,6 +6718,7 @@ public class Program {
                     pd.likes = pr.getProperty(k + "likes", "");
                     pd.waitingFor = pr.getProperty(k + "waiting", "");
                     pd.chatCount = getI(pr, k + "chats", 0);
+                    pd.ward = getI(pr, k + "ward", 0);
                     patients.add(pd);
                     ensurePatientTraits(pd);                 // fills a missing name / likes, rolls restlessness
                     if (pr.getProperty(k + "restless") != null) pd.restless = getB(pr, k + "restless", pd.restless);
@@ -5383,6 +6730,7 @@ public class Program {
                     DoctorData dd = new DoctorData(getF(pr, k + "x", 300f), getF(pr, k + "y", 430f),
                             getB(pr, k + "inside", false), getI(pr, k + "floor", 1));
                     dd.name = pr.getProperty(k + "name", "");
+                    dd.ward = getI(pr, k + "ward", 0);
                     dd.likes = pr.getProperty(k + "likes", "");
                     doctors.add(dd);
                 }
@@ -5392,6 +6740,7 @@ public class Program {
                     String k = "guard." + i + ".";
                     GuardData gd = new GuardData(getF(pr, k + "x", 600f), getF(pr, k + "y", 450f));
                     gd.flashlightAngle = getF(pr, k + "angle", (float) (Math.PI / 2));
+                    gd.duty = getI(pr, k + "duty", 0);
                     gd.name = pr.getProperty(k + "name", "");
                     gd.likes = pr.getProperty(k + "likes", "");
                     guards.add(gd);
@@ -5807,6 +7156,8 @@ public class Program {
 
         private void renderPatientWithSpriteAndHealth(Graphics2D g, int x, int y, String label, String need, float hp,
                                                       boolean isFemale, PatientData patient) {
+            boolean seated = patient != null && patient.canteenState == 2 && patient.isInside;
+            if (seated) y += 6;                                  // sits down on the chair
             BufferedImage sheet = isFemale ? femalePatientSheet : malePatientSheet;
             BufferedImage frame = patient != null ? currentPatientFrame(patient) : null;
             boolean lying = patient != null && patient.lyingDown && frame != null;
@@ -5825,6 +7176,11 @@ public class Program {
             g.fillRoundRect(x - 5, barY, 36, 6, 5, 5);
             g.setColor(hp > 50 ? Color.GREEN : (hp > 25 ? Color.YELLOW : Color.RED));
             g.fillRoundRect(x - 4, barY + 1, (int) (34 * (Math.max(0, hp) / 100.0f)), 4, 4, 4);
+            if (!seated) drawPatientTag(g, x, y, label, need, patient);
+        }
+
+        /** The "[STATUS] day/5" label under a resident. */
+        private void drawPatientTag(Graphics2D g, int x, int y, String label, String need, PatientData patient) {
             boolean leaving = patient != null && patient.leaving;
             String status = leaving ? "DISCHARGED" : (patient != null && patient.escaping) ? "ESCAPING!" : (patient != null && patient.escorted) ? "ESCORTED" : (patient != null && isCritical(patient)) ? "CRITICAL!" : (patient != null && patient.resting) ? "RESTING" : need;
             String days = patient == null ? ""
@@ -5865,6 +7221,15 @@ public class Program {
                 renderCharacterBadge(g, x, y, Color.BLUE, label, "GRD");
             }
             if (guard != null && guard.carrying) drawStackedTrash(g, x + 12, y - 8, 1);   // bag in his hands
+            if (guard != null && (guard.taskState == 8 || guard.taskState == 9)) {         // mop / broom in his hands
+                double swing = guard.cleanStartMillis != 0L ? Math.sin(System.currentTimeMillis() / 110.0) * 0.6 : 0;
+                Graphics2D t = (Graphics2D) g.create();
+                t.translate(x + 24, y + PLAYER_HEIGHT - 2);
+                t.rotate(0.35 + swing);
+                drawToolShape(t, guard.taskState == 8 ? TOOL_MOP : TOOL_BROOM);
+                t.dispose();
+                label = label + (guard.taskState == 8 ? " - mopping" : " - sweeping");
+            }
             drawEntityLabel(g, label, x + PLAYER_WIDTH / 2, y + 42, new Color(231, 235, 249));
         }
 
