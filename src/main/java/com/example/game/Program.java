@@ -46,7 +46,7 @@ public class Program {
     private static final int ARRIVAL_TRUCK_Y = ROAD_LANE_UPPER_Y + (ROAD_CAR_HEIGHT - ARRIVAL_TRUCK_HEIGHT) / 2;
     private static final float HIRE_DROP_OFF_X = 700f;   // the recruitment van drops the new hire when it passes the gate
     // Pedestrians stroll along the pavement between the wall and the road (much slower than the cars)
-    private static final int PEDESTRIAN_HEIGHT = 62;
+    private static final int PEDESTRIAN_HEIGHT = 44;
     private static final float PEDESTRIAN_SPEED = 26.0f;       // px per second (cars do 132)
     private static final int PEDESTRIAN_LANE_RIGHT_Y = 591;    // feet of someone walking right
     private static final int PEDESTRIAN_LANE_LEFT_Y = 603;     // feet of someone walking left (nearer the road)
@@ -68,7 +68,7 @@ public class Program {
 
     public static class ShelterScreen extends GameScreen {
         private int day = 1;
-        private int score = 1850;
+        private int score = 300;
         private int currencyPoints = 500;
         private int power = 98;
         private int waste = 22;
@@ -251,7 +251,7 @@ public class Program {
                 "CLEAN UP", "RECALL PATIENTS", "HIRING STAFF", "STORAGE ROOM", "YOU'RE READY"};
         private static final String[] TUTORIAL_TEXT = {
                 "Welcome, Overseer! Keep your patients alive. After 5 days of quarantine they get to go home. "
-                        + "Walk around with W A S D.",
+                        + "GOAL: survive 20 days or send 30 people home - lose 5 residents and the shelter is closed. Walk around with W A S D.",
                 "Walk up to the door of the 1st or 2nd building and press E to go inside.",
                 "Inside, the UP stairs are on the left and the DOWN stairs on the right (press E on them). "
                         + "Walk to the exit at the bottom of the ground floor and press E to go back outside.",
@@ -324,6 +324,7 @@ public class Program {
             nameOf(p);
             likesOf(p);
             p.restless = p.rand.nextDouble() < 0.30;
+            if (p.waitingFor == null || p.waitingFor.isEmpty()) p.waitingFor = WAITING_FOR[npcRandom.nextInt(WAITING_FOR.length)];
             p.nextEscapeMillis = System.currentTimeMillis() + 45_000L + p.rand.nextInt(60_000);
         }
 
@@ -411,6 +412,10 @@ public class Program {
             o.add("What do you like?");
             o.add("Chat about " + likesOf(talkTarget));
             if (talkTarget instanceof PatientData && ((PatientData) talkTarget).escaping) o.add("Ask them to go back inside");
+            if (talkTarget instanceof PatientData) {
+                o.add("Ask about their story");
+                if (((PatientData) talkTarget).chatCount > 0) o.add("Ask what they've noticed");
+            }
             if (talkTarget instanceof ReceptionistData) o.add("Ask for a floor report");
             o.add("Goodbye");
             return o;
@@ -461,6 +466,10 @@ public class Program {
                 talkReply = likesLine(t);
             } else if (choice.startsWith("Chat about")) {
                 talkReply = chatLine(t);
+            } else if (choice.equals("Ask about their story") && t instanceof PatientData) {
+                talkReply = storyLine((PatientData) t);
+            } else if (choice.equals("Ask what they've noticed") && t instanceof PatientData) {
+                talkReply = hintLine((PatientData) t);
             } else if (choice.equals("Ask for a floor report")) {
                 talkReply = "\"" + floorReportText() + "\"";
             } else if (choice.equals("Ask them to go back inside") && t instanceof PatientData) {
@@ -536,11 +545,13 @@ public class Program {
             long now = System.currentTimeMillis();
             if (now < p.chatCooldownUntil) return "\"I'd love to keep chatting about " + l + ", but I'm a little tired right now.\"";
             p.chatCooldownUntil = now + 45_000L;
+            p.chatCount++;
+            String trust = p.chatCount == 1 ? "  They seem to trust you now - ask what they've noticed." : "";
             if (p.nextEscapeMillis < now + 60_000L) p.nextEscapeMillis = now + 60_000L + p.rand.nextInt(30_000);   // calmer for a while
-            if (p.hp >= 100f) return "\"You talk about " + l + " for a while. " + nameOf(p) + " beams, in great spirits already!\"";
+            if (p.hp >= 100f) return "\"You talk about " + l + " for a while. " + nameOf(p) + " beams, in great spirits already!\"" + trust;
             p.hp = Math.min(100f, p.hp + 5f);
             score += 5;
-            return "You talk about " + l + " for a while. " + nameOf(p) + " smiles and looks a little better.  (+5 HP)";
+            return "You talk about " + l + " for a while. " + nameOf(p) + " smiles and looks a little better.  (+5 HP)" + trust;
         }
 
         // Head portrait for the dialogue box: the top of the character's idle sprite, cropped once and cached
@@ -668,6 +679,313 @@ public class Program {
             g.setFont(new Font("SansSerif", Font.BOLD, 10));
             g.setColor(new Color(236, 214, 160, 210));
             g.drawString("W/S  SELECT    E  CONFIRM    Q  LEAVE", ox, oy - 8);
+        }
+
+        // ---------- RUN GOAL, MEMORIAL + END SCREEN ----------
+        private static final int WIN_DAYS = 20;          // goal 1: keep the shelter running this many days...
+        private static final int WIN_DISCHARGED = 30;    // goal 2: ...or send this many residents home healthy
+        private static final int LOSE_DEATHS = 5;        // lose this many residents and the shelter is closed down
+        private static final int LOSE_SCORE = 0;         // ...or let the score fall below this
+        private static final String[] WAITING_FOR = {"daughter", "little brother", "dog", "grandmother", "partner",
+                "best friend", "parents", "cat", "twin sister", "neighbours"};
+
+        private static class Memorial {
+            String name;
+            int day;
+            String cause;
+        }
+        private final List<Memorial> memorial = new ArrayList<>();
+        private int lostCount = 0;
+        private boolean endScreenOpen = false, runWon = false, endNewBest = false;
+        private String endReason = "", endGrade = "";
+        private int endRow = 0, endDays = 0, endSaved = 0, endLost = 0, endScore = 0, bestScore = 0;
+        private long endShownMillis = 0L, endLastKeyMillis = 0L;
+
+        private static Path bestPath() {
+            return Paths.get(System.getProperty("user.home"), ".quarantine_haven", "best.properties");
+        }
+
+        private int readBestScore() {
+            try (InputStream in = Files.newInputStream(bestPath())) {
+                Properties pr = new Properties();
+                pr.load(in);
+                return getI(pr, "bestScore", 0);
+            } catch (Exception e) {
+                return 0;
+            }
+        }
+
+        private void writeBestScore(int value) {
+            try {
+                Path file = bestPath();
+                Files.createDirectories(file.getParent());
+                Properties pr = new Properties();
+                put(pr, "bestScore", value);
+                try (java.io.OutputStream out = Files.newOutputStream(file)) {
+                    pr.store(out, "Quarantine Haven best run");
+                }
+            } catch (Exception ignored) {
+                // best score just isn't remembered
+            }
+        }
+
+        private String heOf(PatientData p) { return p.isFemale ? "she" : "he"; }
+        private String hisOf(PatientData p) { return p.isFemale ? "her" : "his"; }
+        private String himOf(PatientData p) { return p.isFemale ? "her" : "him"; }
+        private static String cap(String s) { return s.isEmpty() ? s : Character.toUpperCase(s.charAt(0)) + s.substring(1); }
+
+        private String causeOf(String need) {
+            switch (need) {
+                case "HUNGRY": return "hunger";
+                case "THIRSTY": return "thirst";
+                default: return "illness";
+            }
+        }
+
+        /** A named resident died: remember them. */
+        private void recordDeath(PatientData p) {
+            Memorial m = new Memorial();
+            m.name = nameOf(p);
+            m.day = day;
+            m.cause = causeOf(p.need);
+            memorial.add(m);
+            lostCount++;
+            String msg = "In memory: " + m.name + ", Day " + m.day + " (" + m.cause + ").  -100";
+            currentEvent = "WARNING: " + m.name + " died of " + m.cause + "! (" + lostCount + "/" + LOSE_DEATHS + " lost, -100)";
+            addNotice(msg, new Color(225, 112, 83));
+        }
+
+        private String memorialSummary() {
+            if (memorial.isEmpty()) return "";
+            StringBuilder sb = new StringBuilder();
+            int shown = 0;
+            for (int i = memorial.size() - 1; i >= 0 && shown < 6; i--, shown++) {
+                if (sb.length() > 0) sb.append(",  ");
+                sb.append(memorial.get(i).name).append(" (Day ").append(memorial.get(i).day).append(")");
+            }
+            if (memorial.size() > shown) sb.append("  +").append(memorial.size() - shown).append(" more");
+            return sb.toString();
+        }
+
+        private String gradeFor(boolean won, int days, int lost) {
+            if (!won) return days >= 10 ? "D" : "F";
+            if (lost == 0) return "S";
+            if (lost <= 1) return "A";
+            if (lost <= 2) return "B";
+            if (lost <= 3) return "C";
+            return "D";
+        }
+
+        private void checkRunEnd() {
+            if (endScreenOpen) return;
+            if (lostCount >= LOSE_DEATHS) {
+                finishRun(false, LOSE_DEATHS + " residents died on your watch. The authorities have closed the shelter.");
+            } else if (score < LOSE_SCORE) {
+                finishRun(false, "Your score fell below zero - the shelter lost its funding and was shut down.");
+            } else if (day > WIN_DAYS) {
+                finishRun(true, "You kept the shelter running for " + WIN_DAYS + " days. The outbreak is under control!");
+            } else if (dischargedCount >= WIN_DISCHARGED) {
+                finishRun(true, "You sent " + WIN_DISCHARGED + " residents home safely. Mission accomplished!");
+            }
+        }
+
+        private void finishRun(boolean won, String reason) {
+            if (endScreenOpen) return;
+            if (won) score += 500;                               // completion bonus
+            endDays = Math.max(0, day - 1);
+            endSaved = dischargedCount;
+            endLost = lostCount;
+            endScore = score;
+            endGrade = gradeFor(won, endDays, endLost);
+            int best = readBestScore();
+            endNewBest = endScore > best;
+            bestScore = Math.max(best, endScore);
+            if (endNewBest) writeBestScore(endScore);
+            runWon = won;
+            endReason = reason;
+            endRow = 0;
+            endShownMillis = System.currentTimeMillis();
+            pauseMenuOpen = false;
+            hirePanelOpen = false;
+            storagePanelOpen = false;
+            talkTarget = null;
+            skipSaveOnExit = true;                                // a finished run is not saved
+            try {
+                Files.deleteIfExists(savePath());
+            } catch (Exception ignored) {
+                // nothing to delete
+            }
+            endScreenOpen = true;
+            currentEvent = won ? "SHELTER SECURED!" : "SHELTER CLOSED.";
+        }
+
+        private void endScreenKey(int keyCode) {
+            long now = System.currentTimeMillis();
+            if (now - endShownMillis < 900L || now - endLastKeyMillis < 130L) return;
+            endLastKeyMillis = now;
+            switch (keyCode) {
+                case KeyEvent.VK_W:
+                case KeyEvent.VK_UP:
+                case KeyEvent.VK_S:
+                case KeyEvent.VK_DOWN:
+                    endRow = 1 - endRow;
+                    break;
+                case KeyEvent.VK_E:
+                case KeyEvent.VK_ENTER:
+                    interactionKeyDown = true;                    // a held E must not fire in the new game
+                    if (endRow == 0) startNewGame();
+                    else goToMainMenu();
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        private void renderEndScreen(Graphics2D g) {
+            g.setColor(new Color(0, 0, 0, 205));
+            g.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+            Color accent = runWon ? new Color(109, 198, 146) : new Color(225, 112, 83);
+            int panelW = 780, panelH = 540;
+            int px = (WORLD_WIDTH - panelW) / 2, py = (WORLD_HEIGHT - panelH) / 2;
+            g.setPaint(new GradientPaint(px, py, new Color(15, 27, 40, 252), px, py + panelH, new Color(20, 36, 49, 250)));
+            g.fillRoundRect(px, py, panelW, panelH, 18, 18);
+            g.setColor(new Color(104, 148, 159, 190));
+            g.drawRoundRect(px, py, panelW, panelH, 18, 18);
+            g.setColor(accent);
+            g.fillRoundRect(px, py, panelW, 6, 8, 8);
+
+            g.setFont(new Font("SansSerif", Font.BOLD, 32));
+            g.setColor(accent);
+            g.drawString(runWon ? "SHELTER SECURED" : "SHELTER CLOSED", px + 30, py + 60);
+            g.setFont(new Font("SansSerif", Font.PLAIN, 14));
+            g.setColor(new Color(214, 226, 230));
+            int ry = py + 86;
+            int lineCount = 0;
+            for (String line : wrapText(g, endReason, panelW - 60, new Font("SansSerif", Font.PLAIN, 14))) {
+                if (lineCount++ >= 2) break;
+                g.setFont(new Font("SansSerif", Font.PLAIN, 14));
+                g.drawString(line, px + 30, ry);
+                ry += 20;
+            }
+
+            // stat tiles
+            String[] labels = {"DAYS SURVIVED", "PATIENTS SAVED", "PATIENTS LOST", "FINAL SCORE", "GRADE"};
+            String[] values = {endDays + " / " + WIN_DAYS, endSaved + " / " + WIN_DISCHARGED, endLost + " / " + LOSE_DEATHS,
+                    String.format("%,d", endScore), endGrade};
+            int tileW = 134, tileH = 92, tileGap = 12;
+            int tx0 = px + 30, ty = py + 134;
+            for (int i = 0; i < labels.length; i++) {
+                int tx = tx0 + i * (tileW + tileGap);
+                boolean grade = i == labels.length - 1;
+                g.setColor(grade ? new Color(36, 58, 70, 240) : new Color(24, 40, 52, 220));
+                g.fillRoundRect(tx, ty, tileW, tileH, 12, 12);
+                g.setColor(grade ? accent : new Color(70, 96, 110, 170));
+                g.drawRoundRect(tx, ty, tileW, tileH, 12, 12);
+                g.setFont(new Font("SansSerif", Font.BOLD, 10));
+                g.setColor(new Color(151, 177, 188));
+                g.drawString(labels[i], tx + 14, ty + 24);
+                g.setFont(new Font("SansSerif", Font.BOLD, grade ? 44 : 24));
+                g.setColor(grade ? accent : i == 2 && endLost > 0 ? new Color(240, 150, 125) : new Color(236, 241, 238));
+                g.drawString(values[i], tx + 14, ty + (grade ? 70 : 62));
+            }
+
+            // best score
+            g.setFont(new Font("SansSerif", Font.BOLD, 13));
+            g.setColor(new Color(244, 183, 127));
+            g.drawString("BEST SCORE  " + String.format("%,d", bestScore), px + 30, py + 256);
+            if (endNewBest) {
+                int a = 170 + (int) (85 * Math.sin(System.currentTimeMillis() / 220.0));
+                g.setColor(new Color(255, 226, 120, Math.max(0, Math.min(255, a))));
+                g.drawString("NEW BEST!", px + 190, py + 256);
+            }
+
+            // memorial
+            g.setColor(new Color(92, 119, 132, 150));
+            g.drawLine(px + 30, py + 274, px + panelW - 30, py + 274);
+            g.setFont(new Font("SansSerif", Font.BOLD, 11));
+            g.setColor(new Color(151, 177, 188));
+            g.drawString("IN MEMORY", px + 30, py + 298);
+            Font mf = new Font("SansSerif", Font.PLAIN, 13);
+            String text = memorial.isEmpty() ? "Nobody was lost. Every resident who could be saved, was."
+                    : memorialSummary();
+            int my = py + 320;
+            int ml = 0;
+            g.setColor(memorial.isEmpty() ? new Color(160, 235, 180) : new Color(228, 214, 200));
+            for (String line : wrapText(g, text, panelW - 60, mf)) {
+                if (ml++ >= 3) break;
+                g.setFont(mf);
+                g.drawString(line, px + 30, my);
+                my += 19;
+            }
+
+            // buttons
+            String[] items = {"PLAY AGAIN", "MAIN MENU"};
+            String[] hints = {"Start a brand new run - can you beat your best?", "Back to the title screen."};
+            int by0 = py + 392;
+            for (int i = 0; i < items.length; i++) {
+                int by = by0 + i * 54;
+                boolean sel = i == endRow;
+                g.setColor(sel ? new Color(36, 58, 70, 235) : new Color(24, 40, 52, 200));
+                g.fillRoundRect(px + 30, by, panelW - 60, 46, 10, 10);
+                g.setColor(sel ? new Color(244, 153, 75) : new Color(70, 96, 110, 160));
+                g.drawRoundRect(px + 30, by, panelW - 60, 46, 10, 10);
+                g.setFont(new Font("SansSerif", Font.BOLD, 16));
+                g.setColor(new Color(236, 241, 238));
+                g.drawString(items[i], px + 50, by + 21);
+                g.setFont(new Font("SansSerif", Font.PLAIN, 11));
+                g.setColor(new Color(151, 177, 188));
+                g.drawString(hints[i], px + 50, by + 37);
+            }
+            g.setFont(new Font("SansSerif", Font.BOLD, 10));
+            g.setColor(new Color(244, 183, 127));
+            g.drawString("W / S  SELECT     E / ENTER  CONFIRM", px + 30, py + panelH - 14);
+        }
+
+        // ---------- PATIENT STORIES, HINTS + FAREWELLS ----------
+        private String storyLine(PatientData p) {
+            ensurePatientTraits(p);
+            int dayNo = Math.max(1, Math.min(QUARANTINE_DAYS, day - p.arrivalDay + 1));
+            String name = nameOf(p);
+            String status;
+            if (dayNo <= 1) status = name + " only arrived today and is still finding " + hisOf(p) + " feet.";
+            else if (dayNo >= QUARANTINE_DAYS) status = name + " has been here " + dayNo + " days - " + heOf(p) + " goes home at dawn!";
+            else if (QUARANTINE_DAYS - dayNo == 1) status = name + " has been here " + dayNo + " days - " + heOf(p) + "'s almost home.";
+            else status = name + " has been here " + dayNo + " days and is settling in.";
+            return status + " " + cap(heOf(p)) + " can't wait to see " + hisOf(p) + " " + p.waitingFor + ".";
+        }
+
+        /** Something the resident noticed around the shelter - built from what is really going on. */
+        private String hintLine(PatientData p) {
+            long now = System.currentTimeMillis();
+            List<String> hints = new ArrayList<>();
+            for (PatientData q : patients) {
+                if (q == p || q.leaving || q.arriving) continue;
+                if (q.restless && q.need.equals("HEALTHY") && q.nextEscapeMillis - now < 60_000L) {
+                    hints.add("I keep seeing " + nameOf(q) + " near the gate. I think " + heOf(q) + "'s planning to slip out.");
+                }
+                if (isCritical(q)) hints.add(nameOf(q) + " looked really pale earlier. Please get a doctor to " + himOf(q) + " fast.");
+                else if (q.resting) hints.add(nameOf(q) + " went to bed looking exhausted. " + cap(heOf(q)) + " could use a visit.");
+            }
+            if (food < 25 || water < 25) hints.add("I overheard the kitchen is nearly out of " + (food < water ? "food" : "water") + ". Check the storage room.");
+            if (medicine < 20) hints.add("The medicine shelf looked pretty bare when I walked past.");
+            if (!puddles.isEmpty()) hints.add("Somebody is going to slip on those puddles out in the yard.");
+            if (leafPiles.size() >= 4) hints.add("The yard is full of leaves. It makes the place feel neglected.");
+            if (stackedTrashCount >= 3) hints.add("The trash pile by the wall is getting big. It's starting to smell.");
+            if (!guards.isEmpty() && patients.size() > guards.size() * 5) {
+                hints.add(nameOf(guards.get(p.rand.nextInt(guards.size()))) + ", the guard at the gate, looks exhausted. Maybe hire another one?");
+            }
+            if (!doctors.isEmpty() && patients.size() > doctors.size() * 4) {
+                hints.add("Dr. " + nameOf(doctors.get(p.rand.nextInt(doctors.size()))) + " hasn't sat down all day. Another doctor would help.");
+            }
+            if (hints.isEmpty()) return "\"Honestly? Things feel calm today. Thank you for asking.\"";
+            return "\"" + hints.get(p.rand.nextInt(hints.size())) + "\"";
+        }
+
+        private String farewellLine(PatientData p) {
+            ensurePatientTraits(p);
+            String likes = likesOf(p);
+            if (p.chatCount >= 2) return pick("Thanks for all our chats, Overseer!", "I'll miss our talks about " + likes + "!");
+            return pick("Thank you for everything, Overseer!", "I'm going to see my " + p.waitingFor + "!", "Back home to " + likes + ". Bye!");
         }
 
         // ---------- PAUSE MENU (press BACKSPACE) ----------
@@ -814,6 +1132,9 @@ public class Program {
             boolean resting = false;         // very weak: lies in their own bed until recovered
             boolean lyingDown = false;
             boolean criticalNotified = false;
+            String waitingFor = "";          // who they can't wait to see again once they're home
+            int chatCount = 0;               // how often the overseer has chatted with them
+            String farewell = "";            // what they say on the way out of the gate
             long slipCooldownMillis = 0L;
             // social activities (games / chat with another resident)
             int playState = 0;               // 0 none, 1 walking to the spot, 2 playing
@@ -1170,11 +1491,13 @@ public class Program {
             bindKey(KeyEvent.VK_ENTER, e -> { if (hirePanelOpen) hirePanelKey(KeyEvent.VK_ENTER); });
             // BACKSPACE = pause menu (resume / save / log out)
             Input.keyboard().onKeyPressed(KeyEvent.VK_BACK_SPACE, e -> {
+                if (endScreenOpen) return;
                 if (pauseMenuOpen) closePauseMenu();
                 else openPauseMenu();
             });
             // ESC = close a panel, otherwise step back out of the building
             Input.keyboard().onKeyPressed(KeyEvent.VK_ESCAPE, e -> {
+                if (endScreenOpen) return;
                 if (pauseMenuOpen) closePauseMenu();
                 else if (talkTarget != null) closeTalk();
                 else if (hirePanelOpen) hirePanelOpen = false;
@@ -1203,7 +1526,8 @@ public class Program {
         /** Binds a key; while the pause menu is open every key goes to the menu instead. */
         private void bindKey(int keyCode, java.util.function.Consumer<KeyEvent> action) {
             Input.keyboard().onKeyPressed(keyCode, e -> {
-                if (pauseMenuOpen) pauseMenuKey(keyCode);
+                if (endScreenOpen) endScreenKey(keyCode);
+                else if (pauseMenuOpen) pauseMenuKey(keyCode);
                 else if (talkTarget != null) talkMenuKey(keyCode);
                 else action.accept(e);
             });
@@ -2668,7 +2992,7 @@ public class Program {
 
         private void updateGameLoop() {
             updateTransition();
-            if (pauseMenuOpen) return;      // paused: the whole shelter is frozen
+            if (pauseMenuOpen || endScreenOpen) return;      // paused / run over: the whole shelter is frozen
             if (talkTarget != null && (!talkableNow(talkTarget)
                     || !(patients.contains(talkTarget) || doctors.contains(talkTarget) || guards.contains(talkTarget) || receptionists.contains(talkTarget)))) {
                 closeTalk();                // they left, or the overseer walked away / changed floor
@@ -2720,8 +3044,8 @@ public class Program {
             }
 
             if (!deadPatients.isEmpty()) {
+                for (PatientData dp : deadPatients) recordDeath(dp);
                 patients.removeAll(deadPatients);
-                currentEvent = "WARNING: A patient died due to neglect! Score penalty applied (-100).";
             }
 
             for (DoctorData d : doctors) {
@@ -2732,6 +3056,7 @@ public class Program {
                 updateGuard(g);
             }
 
+            checkRunEnd();
             long currentTime = System.currentTimeMillis();
             if (currentTime - lastTickTime >= 1000) {
                 lastTickTime = currentTime;
@@ -3528,6 +3853,7 @@ public class Program {
                         String msg = nameOf(p) + " completed " + QUARANTINE_DAYS + " days of quarantine and has left the facility!";
                         currentEvent = msg + " (+75)";
                         addNotice(msg + "  +75", new Color(132, 214, 165));
+                        if (p.farewell != null && !p.farewell.isEmpty()) addNotice(nameOf(p) + ": \"" + p.farewell + "\"", new Color(160, 235, 180));
                     }
                 } else if (travelTo(p, false, 1, GATE_MOUTH_X, GATE_MOUTH_Y, 1.2f)) {
                     p.exiting = true;
@@ -4247,6 +4573,7 @@ public class Program {
                     p.resting = false;
                     p.lyingDown = false;
                     if (p.playState != 0) endPlay(p, false);
+                    p.farewell = farewellLine(p);
                     resetNav(p.nav);
                     discharged++;
                     addNotice(nameOf(p) + " finished " + QUARANTINE_DAYS + " days of quarantine - heading for the gate!",
@@ -4310,6 +4637,7 @@ public class Program {
                 renderFrame(scene);
                 if (talkTarget != null) renderTalkPanel(scene);
                 if (pauseMenuOpen) renderPauseMenu(scene);
+                if (endScreenOpen) renderEndScreen(scene);
             } finally {
                 scene.dispose();
             }
@@ -4371,6 +4699,11 @@ public class Program {
                     }
                 }
                 renderPatientGames(g, false);
+                for (PatientData fp : patients) {
+                    if (fp.leaving && !fp.isInside && fp.farewell != null && !fp.farewell.isEmpty()) {
+                        drawSpeechBubble(g, fp.farewell, (int) fp.posX + PLAYER_WIDTH / 2, Math.max(205, (int) fp.currentY - 66));
+                    }
+                }
                 for (DoctorData d : doctors) {
                     if (!d.isInside) {
                         renderDoctor(g, (int) d.posX, (int) d.currentY, "Dr. " + nameOf(d), d);
@@ -4678,7 +5011,7 @@ public class Program {
             g.setColor(new Color(0, 0, 0, 165));
             g.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
             int rows = PAUSE_ITEMS.length, rowH = 54;
-            int panelW = 540, panelH = 96 + rows * rowH + 74;
+            int panelW = 540, panelH = 96 + rows * rowH + 104;
             int px = (WORLD_WIDTH - panelW) / 2, py = (WORLD_HEIGHT - panelH) / 2;
             g.setPaint(new GradientPaint(px, py, new Color(15, 27, 40, 252), px, py + panelH, new Color(20, 36, 49, 250)));
             g.fillRoundRect(px, py, panelW, panelH, 16, 16);
@@ -4691,7 +5024,8 @@ public class Program {
             g.drawString("PAUSED", px + 26, py + 46);
             g.setFont(new Font("SansSerif", Font.PLAIN, 12));
             g.setColor(new Color(163, 188, 196));
-            g.drawString("Day " + day + "  ·  " + patients.size() + " residents  ·  score " + String.format("%,d", score), px + 26, py + 68);
+            g.drawString("Day " + day + "/" + WIN_DAYS + "  ·  saved " + dischargedCount + "/" + WIN_DISCHARGED + "  ·  lost " + lostCount + "/" + LOSE_DEATHS
+                    + "  ·  score " + String.format("%,d", score), px + 26, py + 68);
 
             for (int i = 0; i < rows; i++) {
                 int ry = py + 86 + i * rowH;
@@ -4712,6 +5046,8 @@ public class Program {
             g.setFont(new Font("SansSerif", Font.BOLD, 10));
             g.setColor(new Color(244, 183, 127));
             g.drawString("W / S  SELECT     E / ENTER  CONFIRM     BACKSPACE  RESUME", px + 26, fy + 14);
+            g.setColor(new Color(214, 190, 170));
+            drawFittedString(g, "IN MEMORY:  " + (memorial.isEmpty() ? "nobody lost yet." : memorialSummary()), px + 26, fy + 66, panelW - 52, new Font("SansSerif", Font.PLAIN, 11));
             if (!pauseMessage.isEmpty()) {
                 g.setFont(new Font("SansSerif", Font.BOLD, 12));
                 g.setColor(new Color(245, 200, 112));
@@ -4763,7 +5099,7 @@ public class Program {
             skipSaveOnExit = false;
 
             day = 1;
-            score = 1850;
+            score = 300;
             currencyPoints = 500;
             power = 98;
             waste = 22;
@@ -4788,6 +5124,10 @@ public class Program {
 
             nextPatientId = 1;
             dischargedCount = 0;
+            lostCount = 0;
+            memorial.clear();
+            endScreenOpen = false;
+            runWon = false;
             departedPatients.clear();
             patients.clear();
             doctors.clear();
@@ -4844,7 +5184,7 @@ public class Program {
             tutPatient = null;
 
             currentEvent = "Welcome to Quarantine Haven! Follow the tutorial card (press T to skip it).";
-            addNotice("New game started - good luck, Overseer!", new Color(132, 214, 165));
+            addNotice("New game started. Goal: survive " + WIN_DAYS + " days or send " + WIN_DISCHARGED + " residents home.", new Color(132, 214, 165));
         }
 
         private synchronized boolean saveGame() {
@@ -4868,6 +5208,11 @@ public class Program {
                 put(pr, "currentFloor", currentFloor);
                 put(pr, "nextPatientId", nextPatientId);
                 put(pr, "dischargedCount", dischargedCount);
+                put(pr, "lostCount", lostCount);
+                put(pr, "memorialCount", memorial.size());
+                for (int mi = 0; mi < memorial.size(); mi++) {
+                    put(pr, "memorial." + mi, memorial.get(mi).name + "|" + memorial.get(mi).day + "|" + memorial.get(mi).cause);
+                }
                 put(pr, "tutorialActive", tutorialActive);
                 put(pr, "tutorialStep", tutorialStep);
                 int pendingTrash = stackedTrashCount;
@@ -4907,6 +5252,8 @@ public class Program {
                     put(pr, k + "name", pd.name);
                     put(pr, k + "likes", pd.likes);
                     put(pr, k + "restless", pd.restless);
+                    put(pr, k + "waiting", pd.waitingFor);
+                    put(pr, k + "chats", pd.chatCount);
                     n++;
                 }
                 put(pr, "patientCount", n);
@@ -4981,6 +5328,19 @@ public class Program {
                 stackedTrashCount = getI(pr, "stackedTrashCount", 0);
                 nextPatientId = getI(pr, "nextPatientId", nextPatientId);
                 dischargedCount = getI(pr, "dischargedCount", 0);
+                lostCount = getI(pr, "lostCount", 0);
+                memorial.clear();
+                int memCount = getI(pr, "memorialCount", 0);
+                for (int mi = 0; mi < memCount; mi++) {
+                    String[] parts = pr.getProperty("memorial." + mi, "").split("\\|");
+                    if (parts.length < 3) continue;
+                    Memorial mm = new Memorial();
+                    mm.name = parts[0];
+                    mm.day = Integer.parseInt(parts[1].trim());
+                    mm.cause = parts[2];
+                    memorial.add(mm);
+                }
+                endScreenOpen = false;
                 for (int i = 0; i < 4; i++) {
                     storedStock[i] = getI(pr, "stock." + i, storedStock[i]);
                     autoRestock[i] = getB(pr, "autoRestock." + i, autoRestock[i]);
@@ -5010,6 +5370,8 @@ public class Program {
                     pd.targetY = getF(pr, k + "ty", pd.currentY);
                     pd.name = pr.getProperty(k + "name", "");
                     pd.likes = pr.getProperty(k + "likes", "");
+                    pd.waitingFor = pr.getProperty(k + "waiting", "");
+                    pd.chatCount = getI(pr, k + "chats", 0);
                     patients.add(pd);
                     ensurePatientTraits(pd);                 // fills a missing name / likes, rolls restlessness
                     if (pr.getProperty(k + "restless") != null) pd.restless = getB(pr, k + "restless", pd.restless);
@@ -5242,7 +5604,7 @@ public class Program {
             g.drawLine(panelX + 18, panelY + 57, panelX + panelWidth - 18, panelY + 57);
             String[] metricLabels = {"DAY", "RESIDENTS", "NEXT TRUCK", "SCORE", "SUPPLY POINTS"};
             String[] metricValues = {
-                    String.format("%02d", day), String.valueOf(patients.size()),
+                    String.format("%02d / %d", day, WIN_DAYS), String.valueOf(patients.size()),
                     String.format("%02d:%02d", secondsRemaining / 60, secondsRemaining % 60),
                     String.format("%,d", score), String.format("%,d", currencyPoints)
             };
@@ -5265,6 +5627,14 @@ public class Program {
                 g.setFont(new Font("SansSerif", Font.BOLD, 20));
                 g.setColor(metricColors[i]);
                 g.drawString(metricValues[i], x + 16, panelY + 99);
+                if (i == 1) {      // run goal + losses next to the resident count
+                    int vw = g.getFontMetrics().stringWidth(metricValues[i]);
+                    g.setFont(new Font("SansSerif", Font.BOLD, 10));
+                    g.setColor(new Color(240, 214, 160));
+                    g.drawString("SAVED " + dischargedCount + "/" + WIN_DISCHARGED, x + 16 + vw + 10, panelY + 90);
+                    g.setColor(lostCount > 0 ? new Color(240, 140, 115) : new Color(151, 177, 188));
+                    g.drawString("LOST " + lostCount + "/" + LOSE_DEATHS, x + 16 + vw + 10, panelY + 102);
+                }
             }
             g.setColor(new Color(8, 15, 23, 224));
             g.fillRoundRect(24, 141, 620, 30, 9, 9);
@@ -5309,7 +5679,7 @@ public class Program {
             drawFittedString(g, location, panelX + panelWidth - 360, panelY + 24, 340,
                     new Font("SansSerif", Font.BOLD, 11));
             String[] labels = {"DAY", "RESIDENTS", "NEXT TRUCK", "SCORE", "SUPPLY POINTS"};
-            String[] values = {String.format("%02d", day), String.valueOf(patients.size()),
+            String[] values = {String.format("%02d/%d", day, WIN_DAYS), String.valueOf(patients.size()),
                     String.format("%02d:%02d", secondsRemaining / 60, secondsRemaining % 60),
                     String.format("%,d", score), String.format("%,d", currencyPoints)};
             Color[] colors = {new Color(244, 174, 103), new Color(213, 231, 235),
