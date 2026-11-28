@@ -73,10 +73,10 @@ public class Program {
         private int power = 98;
         private int waste = 22;
         private int stackedTrashCount = 0;
-        private int food = 310;
-        private int water = 290;
-        private int medicine = 115;
-        private int materials = 60;
+        private int food = 120;
+        private int water = 120;
+        private int medicine = 60;
+        private int materials = 40;
         private static final int DAY_DURATION_SECONDS = 300;
         // Day cycle: full daylight until 2:00, slowly darkens until full night at 4:00, night until 5:00.
         // After the 5:00 mark the next day starts and the sun slowly rises over its first 45 seconds.
@@ -177,7 +177,48 @@ public class Program {
 
         // ---------- QUARANTINE: arrivals and discharge ----------
         private static final int START_PATIENTS = 3;        // patients on day 1
-        private static final int DAILY_NEW_PATIENTS = 2;    // arriving at the gate every dawn
+        // difficulty: HP lost per tick while a need is unmet (a patient lasts a couple of minutes), supplies used per treatment,
+        // and what the supply truck drops off in the storage room every dawn
+        // The game starts gentle and ramps up over DIFFICULTY_DAYS days: people fall ill more often, lose HP faster while
+        // unattended, treatments cost more, and the truck's surplus shrinks - while more patients arrive each week.
+        private static final int DIFFICULTY_DAYS = 20;
+        private static final float NEED_DECAY_EASY = 0.0065f, NEED_DECAY_HARD = 0.011f;   // HP lost per tick while a need is unmet
+        private static final float LYING_DECAY_FACTOR = 0.6f;
+        private static final int[] BUY_PRICE = {5, 5, 9, 7};      // supply points per unit when ordering at the terminal (B)
+        private static final int BUY_AMOUNT = 20;
+
+        private static float lerpF(float a, float b, float t) { return a + (b - a) * t; }
+        /** 0 on day 1, 1 from day DIFFICULTY_DAYS+1 onwards. */
+        private float difficulty() { return Math.min(1f, Math.max(0f, (day - 1) / (float) DIFFICULTY_DAYS)); }
+        private float needDecay() { return lerpF(NEED_DECAY_EASY, NEED_DECAY_HARD, difficulty()); }
+        private int costFood() { return 3 + Math.round(5 * difficulty()); }                 // 3 -> 8
+        private int costWater() { return costFood(); }
+        private int costMedicine() { return 2 + Math.round(4 * difficulty()); }             // 2 -> 6
+        private int costIntensiveMedicine() { return 4 + Math.round(5 * difficulty()); }    // 4 -> 9
+        private int sicknessBaseMillis() { return Math.round(lerpF(110000f, 55000f, difficulty())); }
+        private int newPatientsToday() { return Math.min(4, 2 + (day - 1) / 8); }           // 2, then 3 from day 9, 4 from day 17
+        /** What the truck brings for one item: scaled to how many people there are and what they will use, with a surplus that shrinks. */
+        private int dailyDelivery(int item, int residents) {
+            if (item == 3) return 25 + residents * 2;
+            float d = difficulty();
+            float cycleSeconds = sicknessBaseMillis() / 1000f + 15f + 30f + 15f;   // healthy time + the 0-30 s random + waiting + treatment
+            float illnessesPerDay = DAY_DURATION_SECONDS / cycleSeconds;
+            float share = item == 2 ? 0.43f : 0.333f;                            // medicine also covers intensive care
+            int cost = item == 2 ? costMedicine() : costFood();
+            float generosity = lerpF(2.3f, 1.1f, d);
+            return Math.round(residents * illnessesPerDay * share * cost * generosity) + 20;
+        }
+        /** Does the supply line hold what this need uses up? Doctors will not start on someone they cannot supply. */
+        private boolean suppliesFor(String need) {
+            switch (need) {
+                case "HUNGRY": return food >= costFood();
+                case "THIRSTY": return water >= costWater();
+                case "SICK": return medicine >= costMedicine();
+                default: return true;
+            }
+        }
+        private static final int[] LOW_SUPPLY_LEVEL = {30, 30, 20, 10};
+        private final boolean[] lowSupplyWarned = new boolean[4];
         private static final int QUARANTINE_DAYS = 5;       // days a patient stays before going home
         private static final float GATE_MOUTH_X = 710f;     // where patients line up with the gate (top-left of 26px box)
         private static final float GATE_MOUTH_Y = 440f;     // just inside the grounds
@@ -216,12 +257,12 @@ public class Program {
                         + "Walk to the exit at the bottom of the ground floor and press E to go back outside.",
                 "Uh-oh, a patient fell sick! Doctors head over by themselves. Press 4 to call a doctor to wherever you stand - she checks on anyone needing care near you and any critical patient. Press 4 again to send her back.",
                 "Patients get hungry, thirsty or sick. Press 1 to hand out rations or 2 for medicine. "
-                        + "Your stock levels are NOT shown out here - walk into the storage room (3rd building) to check food, water, medicine and materials.",
+                        + "The supply truck unloads into the STORAGE ROOM (3rd building) - take stock out there (A at the terminal) to refill the supply line you use every day.",
                 "Waste piles up. Press 3 to send a guard to building 3: he collects the trash inside and carries it out (costs 10 materials).",
                 "Press 5 to call every patient back to their own room.",
                 "Press H to open the hire menu. Pick a Doctor or a Guard, or press ESC to close it.",
                 "The 3rd building is the storage room. Walk to its door and press E to manage your stock.",
-                "Trucks arrive at dawn with supplies and 2 new patients. Patients that survive 5 days walk out "
+                "Trucks arrive at dawn with supplies and new patients (more of them as the days go on). Patients that survive 5 days walk out "
                         + "the gate. Press - to skip to night. Good luck, Overseer!"};
         private boolean tutorialActive = true;
         private int tutorialStep = 0;
@@ -955,7 +996,7 @@ public class Program {
         // If it looks shifted up/down on your map, change WALL_OVERLAY_Y.
         private static final int WALL_OVERLAY_Y = 364;
         private BufferedImage wallOverlayImage;
-        private final int[] storedStock = new int[4];                    // what is in the storage room
+        private final int[] storedStock = {200, 200, 100, 60};                    // what is in the storage room
         private final boolean[] autoRestock = new boolean[4];            // issue stock to the supply line automatically
         private final int[] restockBelow = {120, 120, 60, 40};           // ...whenever on-hand falls below this
         private boolean storagePanelOpen = false;
@@ -1111,6 +1152,7 @@ public class Program {
             bindKey(KeyEvent.VK_LEFT, e -> { if (storagePanelOpen) storagePanelKey(KeyEvent.VK_LEFT, e.isShiftDown()); });
             bindKey(KeyEvent.VK_RIGHT, e -> { if (storagePanelOpen) storagePanelKey(KeyEvent.VK_RIGHT, e.isShiftDown()); });
             bindKey(KeyEvent.VK_R, e -> { if (storagePanelOpen) storagePanelKey(KeyEvent.VK_R, e.isShiftDown()); });
+            bindKey(KeyEvent.VK_B, e -> { if (storagePanelOpen) storagePanelKey(KeyEvent.VK_B, e.isShiftDown()); });
             bindKey(KeyEvent.VK_E, e -> {
                 if (!interactionKeyDown) {
                     interactionKeyDown = true;
@@ -1168,6 +1210,7 @@ public class Program {
         }
 
         private void openPauseMenu() {
+            if (transitionActive()) return;
             pauseMenuOpen = true;
             pauseMenuRow = 0;
             pauseConfirmErase = false;
@@ -1588,6 +1631,7 @@ public class Program {
 
         /** F: swing the mop / broom at whatever is within reach. */
         private void useTool() {
+            if (transitionActive()) return;
             if (insideBuilding != null) {
                 currentEvent = overseerTool == TOOL_NONE ? "Your hands are empty." : "Mops and brooms are for the yard - take it outside.";
                 return;
@@ -2041,7 +2085,7 @@ public class Program {
         }
 
         private void moveOverseer(int dirX, int dirY) {
-            if (storagePanelOpen || hirePanelOpen || pauseMenuOpen) return;
+            if (storagePanelOpen || hirePanelOpen || pauseMenuOpen || transitionActive()) return;
             // Accumulate fractional speed (e.g. 2.5 px) and move by the whole pixels that have built up
             moveRemainderX += dirX * MOVE_SPEED;
             moveRemainderY += dirY * MOVE_SPEED;
@@ -2093,6 +2137,7 @@ public class Program {
         }
 
         private void interactWithLocation() {
+            if (transitionActive()) return;
             Rectangle playerBounds = actorBoundsAt(overseerX, overseerY);
             if (hirePanelOpen) {
                 hirePanelKey(KeyEvent.VK_E);
@@ -2114,8 +2159,11 @@ public class Program {
             if (insideBuilding != null) {
                 if (playerBounds.intersects(indoorStairsUp)) {
                     if (currentFloor < 3) {
-                        currentFloor++;
-                        currentEvent = "Went UP to Floor " + currentFloor + " of " + insideBuilding + ".";
+                        final int upTo = currentFloor + 1;
+                        startTransition(insideBuilding, "GOING UP  -  FLOOR " + upTo, () -> {
+                            currentFloor = upTo;
+                            currentEvent = "Went UP to Floor " + currentFloor + " of " + insideBuilding + ".";
+                        });
                     } else {
                         currentEvent = "You are already on the top floor. Use the DOWN stairs (right) to go back down.";
                     }
@@ -2123,8 +2171,11 @@ public class Program {
                 }
                 if (playerBounds.intersects(indoorStairsDown)) {
                     if (currentFloor > 1) {
-                        currentFloor--;
-                        currentEvent = "Went DOWN to Floor " + currentFloor + " of " + insideBuilding + ".";
+                        final int downTo = currentFloor - 1;
+                        startTransition(insideBuilding, "GOING DOWN  -  FLOOR " + downTo, () -> {
+                            currentFloor = downTo;
+                            currentEvent = "Went DOWN to Floor " + currentFloor + " of " + insideBuilding + ".";
+                        });
                     } else {
                         currentEvent = "You are on the ground floor. Use the UP stairs (left), or the exit door at the bottom.";
                     }
@@ -2153,6 +2204,10 @@ public class Program {
         }
 
         private void enterBuilding(String buildingName) {
+            startTransition(buildingName, "ENTERING " + buildingName, () -> enterBuildingNow(buildingName));
+        }
+
+        private void enterBuildingNow(String buildingName) {
             insideBuilding = buildingName;
             currentFloor = 1;
             storagePanelOpen = false;
@@ -2175,35 +2230,177 @@ public class Program {
                 return;
             }
             if (insideBuilding != null) {
-                insideBuilding = null;
-                storagePanelOpen = false;
-                overseerX = 580;
-                overseerY = 420;
-                currentEvent = "Returned to compound grounds.";
+                startTransition("COMPOUND GROUNDS", "LEAVING " + insideBuilding, () -> {
+                    insideBuilding = null;
+                    storagePanelOpen = false;
+                    overseerX = 580;
+                    overseerY = 420;
+                    currentEvent = "Returned to compound grounds.";
+                });
+            }
+        }
+
+        // ---------- LOADING / TRANSITION SCREEN (falling viruses, like the main menu) ----------
+        private static final long TRANSITION_FADE_NANOS = 380_000_000L;
+        private static final long TRANSITION_HOLD_NANOS = 950_000_000L;
+        private static final String[] LOADING_TIPS = {
+                "Critical patients rest in bed - press 4 to bring a doctor to you.",
+                "Rain makes puddles: mop them before somebody slips.",
+                "Leaves pile up in the yard - sweep them with the broom.",
+                "Check your stock in the storage room (3rd building).",
+                "Guards stop runaways and escort them back to their ward.",
+                "Patients who play games together recover a little health.",
+                "Press Backspace to pause and save your progress."};
+        private long transitionStartNanos = 0L;
+        private boolean transitionActionDone = false;
+        private Runnable transitionAction = null;
+        private String transitionTitle = "", transitionSubtitle = "", transitionTip = "";
+        private BufferedImage virusLoadingTile;
+        private boolean virusLoadingTileTried = false;
+
+        private boolean transitionActive() {
+            return transitionStartNanos != 0L;
+        }
+
+        private void startTransition(String title, String subtitle, Runnable action) {
+            if (transitionActive()) return;
+            transitionTitle = title;
+            transitionSubtitle = subtitle;
+            transitionTip = LOADING_TIPS[(int) ((System.nanoTime() / 1_000_000L) % LOADING_TIPS.length)];
+            transitionAction = action;
+            transitionActionDone = false;
+            transitionStartNanos = System.nanoTime();
+            talkTarget = null;
+            storagePanelOpen = false;
+            hirePanelOpen = false;
+        }
+
+        /** Runs the queued change (enter / leave / stairs) once the screen is fully covered, then ends the transition. */
+        private void updateTransition() {
+            if (!transitionActive()) return;
+            long elapsed = System.nanoTime() - transitionStartNanos;
+            if (!transitionActionDone && elapsed >= TRANSITION_FADE_NANOS) {
+                transitionActionDone = true;
+                if (transitionAction != null) transitionAction.run();
+            }
+            if (elapsed >= TRANSITION_FADE_NANOS * 2 + TRANSITION_HOLD_NANOS) {
+                transitionStartNanos = 0L;
+                transitionAction = null;
+            }
+        }
+
+        private void renderTransition(Graphics2D g, int sw, int sh) {
+            if (!transitionActive()) return;
+            long elapsed = System.nanoTime() - transitionStartNanos;
+            long total = TRANSITION_FADE_NANOS * 2 + TRANSITION_HOLD_NANOS;
+            double cover;
+            if (elapsed < TRANSITION_FADE_NANOS) cover = elapsed / (double) TRANSITION_FADE_NANOS;
+            else if (elapsed > total - TRANSITION_FADE_NANOS) cover = Math.max(0, (total - elapsed) / (double) TRANSITION_FADE_NANOS);
+            else cover = 1.0;
+            double seconds = elapsed / 1_000_000_000.0;
+            double k = sh / 720.0;
+
+            Graphics2D t = (Graphics2D) g.create();
+            try {
+                t.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+                t.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                t.setComposite(java.awt.AlphaComposite.getInstance(java.awt.AlphaComposite.SRC_OVER, (float) Math.max(0, Math.min(1, cover))));
+                t.setColor(new Color(28, 8, 10));
+                t.fillRect(0, 0, sw, sh);
+                if (!virusLoadingTileTried) {
+                    virusLoadingTileTried = true;
+                    virusLoadingTile = loadImage("/menu_virus_bg.png");
+                }
+                if (virusLoadingTile != null) {
+                    double sc = (double) sw / virusLoadingTile.getWidth();
+                    int tw = (int) Math.ceil(virusLoadingTile.getWidth() * sc), th = (int) Math.ceil(virusLoadingTile.getHeight() * sc);
+                    double fall = (System.nanoTime() / 1e9 * 0.07 * sh) % th;
+                    for (double y = fall - th; y < sh; y += th) {
+                        t.drawImage(virusLoadingTile, 0, (int) Math.floor(y), tw + 1, th + 1, null);
+                    }
+                }
+                t.setPaint(new java.awt.RadialGradientPaint(sw / 2f, sh / 2f, Math.max(sw, sh) * 0.62f,
+                        new float[]{0f, 1f}, new Color[]{new Color(10, 3, 5, 120), new Color(6, 2, 3, 225)}));
+                t.fillRect(0, 0, sw, sh);
+
+                // animated title
+                int size = (int) (58 * k);
+                t.setFont(new Font(Font.MONOSPACED, Font.BOLD, size));
+                FontMetrics fm = t.getFontMetrics();
+                String[] words = {"QUARANTINE", "HAVEN"};
+                for (int w = 0; w < words.length; w++) {
+                    int wordW = fm.stringWidth(words[w]);
+                    int cx = (sw - wordW) / 2;
+                    int baseY = (int) (sh * 0.36) + (int) (w * size * 1.0);
+                    for (int i = 0; i < words[w].length(); i++) {
+                        String letter = String.valueOf(words[w].charAt(i));
+                        int bob = (int) Math.round(Math.sin(seconds * 3.0 + i * 0.55 + w * 1.4) * size * 0.05);
+                        double pulse = 0.5 + 0.5 * Math.sin(seconds * 2.2 - i * 0.45 - w * 2);
+                        t.setColor(new Color(10, 3, 4, 200));
+                        t.drawString(letter, cx + 3, baseY + bob + 4);
+                        t.setColor(new Color(214, 48, 52, (int) (30 + 60 * pulse)));
+                        t.drawString(letter, cx - 2, baseY + bob);
+                        t.drawString(letter, cx + 2, baseY + bob);
+                        t.setColor(new Color(244, (int) (237 - 70 * pulse), (int) (217 - 90 * pulse)));
+                        t.drawString(letter, cx, baseY + bob);
+                        cx += fm.stringWidth(letter);
+                    }
+                }
+
+                // "ENTERING ..." + animated dots
+                int dots = (int) (seconds * 3.0) % 4;
+                String sub = transitionSubtitle + ".".repeat(dots);
+                t.setFont(new Font("SansSerif", Font.BOLD, (int) (22 * k)));
+                FontMetrics sf = t.getFontMetrics();
+                int subY = (int) (sh * 0.36) + (int) (size * 1.0) + (int) (58 * k);
+                t.setColor(new Color(255, 186, 99));
+                t.drawString(transitionSubtitle, (sw - sf.stringWidth(transitionSubtitle + "...")) / 2, subY);
+                t.setColor(new Color(255, 186, 99));
+                t.drawString(".".repeat(dots), (sw - sf.stringWidth(transitionSubtitle + "...")) / 2 + sf.stringWidth(transitionSubtitle), subY);
+
+                // loading bar
+                double progress = Math.min(1.0, Math.max(0.0, (elapsed - TRANSITION_FADE_NANOS * 0.5) / (double) (TRANSITION_HOLD_NANOS + TRANSITION_FADE_NANOS)));
+                int barW = (int) (360 * k), barH = (int) (10 * k);
+                int barX = (sw - barW) / 2, barY = subY + (int) (26 * k);
+                t.setColor(new Color(10, 3, 5, 220));
+                t.fillRoundRect(barX, barY, barW, barH, barH, barH);
+                t.setPaint(new GradientPaint(barX, barY, new Color(214, 48, 52), barX + barW, barY, new Color(244, 153, 75)));
+                t.fillRoundRect(barX, barY, (int) (barW * progress), barH, barH, barH);
+                t.setColor(new Color(120, 44, 48));
+                t.drawRoundRect(barX, barY, barW, barH, barH, barH);
+
+                // tip
+                t.setFont(new Font("SansSerif", Font.PLAIN, (int) (14 * k)));
+                FontMetrics tf = t.getFontMetrics();
+                String tip = "TIP  -  " + transitionTip;
+                t.setColor(new Color(228, 218, 200));
+                t.drawString(tip, (sw - tf.stringWidth(tip)) / 2, (int) (sh * 0.9));
+            } finally {
+                t.dispose();
             }
         }
 
         private void assignTaskToNearestStaff(int taskType) {
             if (taskType >= 0 && taskType < tutTaskPressed.length) tutTaskPressed[taskType] = true;
             if (taskType == 1) {
-                if (food >= 20 && water >= 20) {
-                    food -= 20;
-                    water -= 20;
+                if (food >= 8 && water >= 8) {
+                    food -= 8;
+                    water -= 8;
                     score += 25;
                     currentEvent = "Rations distributed!";
                 } else {
                     currentEvent = "Action Failed: Low reserves.";
                 }
             } else if (taskType == 2) {
-                if (medicine >= 15) {
-                    medicine -= 15;
+                if (medicine >= 6) {
+                    medicine -= 6;
                     score += 30;
                     currentEvent = "Medical treatments applied!";
                 } else {
                     currentEvent = "Action Failed: No medicine left.";
                 }
             } else if (taskType == 3) {
-                if (materials >= 10 && waste > 0) {
+                if (materials >= 5 && waste > 0) {
                     GuardData nearestGuard = null;
                     double minDst = Double.MAX_VALUE;
                     for (GuardData g : guards) {
@@ -2218,14 +2415,14 @@ public class Program {
                         currentEvent = "Action Failed: No free guard right now.";
                         return;
                     }
-                    materials -= 10;
+                    materials -= 5;
                     waste = Math.max(0, waste - 15);
                     score += 20;
                     nearestGuard.taskState = 2;
                     resetNav(nearestGuard.nav);
                     currentEvent = "Guard sent to the storage building to collect the trash!";
                 } else {
-                    currentEvent = "Action Failed: Requires 10 Materials or 0 Waste.";
+                    currentEvent = "Action Failed: Requires 5 Materials or 0 Waste.";
                 }
             }
         }
@@ -2470,6 +2667,7 @@ public class Program {
         }
 
         private void updateGameLoop() {
+            updateTransition();
             if (pauseMenuOpen) return;      // paused: the whole shelter is frozen
             if (talkTarget != null && (!talkableNow(talkTarget)
                     || !(patients.contains(talkTarget) || doctors.contains(talkTarget) || guards.contains(talkTarget) || receptionists.contains(talkTarget)))) {
@@ -2490,16 +2688,15 @@ public class Program {
                     // arriving / discharged patients stay out of the sickness cycle
                 } else if (p.need.equals("HEALTHY")) {
                     if (!tutorialActive) {   // the tutorial controls when someone gets sick
-                        int baseThreshold = 25000;
-                        int sicknessThreshold = Math.max(6000, baseThreshold - ((day - 1) * 4000));
-                        if (System.currentTimeMillis() - p.needTimer > sicknessThreshold + p.rand.nextInt(8000)) {
+                        int sicknessThreshold = sicknessBaseMillis();   // ~110-140 s between illnesses on day 1, ~55-85 s by day 20
+                        if (System.currentTimeMillis() - p.needTimer > sicknessThreshold + p.rand.nextInt(30000)) {
                             p.needTimer = System.currentTimeMillis();
                             String[] needsList = {"HUNGRY", "THIRSTY", "SICK"};
                             p.need = needsList[p.rand.nextInt(needsList.length)];
                         }
                     }
                 } else if (!tutorialActive) {   // no one gets worse while you are still learning
-                    p.hp -= p.lyingDown ? 0.035f : 0.05f;
+                    p.hp -= p.lyingDown ? needDecay() * LYING_DECAY_FACTOR : needDecay();
                     if (p.hp <= 0) {
                         deadPatients.add(p);
                         score -= 100;
@@ -2539,6 +2736,7 @@ public class Program {
             if (currentTime - lastTickTime >= 1000) {
                 lastTickTime = currentTime;
                 runStorageAutoRestock();
+                checkLowSupplies();
                 if (secondsRemaining > 0) {
                     secondsRemaining--;
                 } else {
@@ -3630,7 +3828,7 @@ public class Program {
                 PatientData best = null;
                 float bestScore = Float.MAX_VALUE;
                 for (PatientData p : patients) {
-                    if (p.need.equals("HEALTHY") || isTargetedByOtherDoctor(p, d)) continue;
+                    if (p.need.equals("HEALTHY") || isTargetedByOtherDoctor(p, d) || !suppliesFor(p.need)) continue;
                     assignRoom(p);
                     boolean inRoom = p.isInside && p.floor == p.roomFloor
                             && Math.hypot(p.posX - p.roomX, p.currentY - p.roomY) <= 24f;
@@ -3676,13 +3874,14 @@ public class Program {
                 } else if (nowMs - d.treatStartMillis >= d.treatLength) {
                     // Treatment finished
                     String curedNeed = tp.need;
-                    if (curedNeed.equals("HUNGRY")) food = Math.max(0, food - 15);
-                    else if (curedNeed.equals("THIRSTY")) water = Math.max(0, water - 15);
-                    else if (curedNeed.equals("SICK")) medicine = Math.max(0, medicine - 10);
+                    if (curedNeed.equals("HUNGRY")) food = Math.max(0, food - costFood());
+                    else if (curedNeed.equals("THIRSTY")) water = Math.max(0, water - costWater());
+                    else if (curedNeed.equals("SICK")) medicine = Math.max(0, medicine - costMedicine());
                     tp.need = "HEALTHY";
                     boolean wasIntensive = d.treatIntensive;
-                    if (wasIntensive) medicine = Math.max(0, medicine - 15);
-                    tp.hp = Math.min(100f, tp.hp + (wasIntensive ? 60f : 40f));
+                    boolean fullCare = !wasIntensive || medicine >= costIntensiveMedicine();   // no medicine = she can only stabilise them
+                    if (wasIntensive) medicine = Math.max(0, medicine - costIntensiveMedicine());
+                    tp.hp = Math.min(100f, tp.hp + (wasIntensive ? (fullCare ? 60f : 30f) : 40f));
                     d.treatIntensive = false;
                     d.treatLength = TREAT_MILLIS;
                     tp.needTimer = nowMs;
@@ -3760,6 +3959,26 @@ public class Program {
             currentEvent = storageLastAction;
         }
 
+        /** Tells the player (once per shortage) when the supply line runs low, since stock is no longer shown on the top bar. */
+        private void checkLowSupplies() {
+            for (int item = 0; item < 4; item++) {
+                int have = getOnHand(item);
+                if (have <= LOW_SUPPLY_LEVEL[item]) {
+                    if (!lowSupplyWarned[item]) {
+                        lowSupplyWarned[item] = true;
+                        String name = STORAGE_ITEM_NAMES[item].toLowerCase();
+                        String msg = storedStock[item] > 0
+                                ? "Running low on " + name + " (" + have + ")! Take some from the storage room."
+                                : "Running low on " + name + " (" + have + ") and the storage room is empty - wait for the next truck!";
+                        currentEvent = msg;
+                        addNotice(msg, new Color(240, 140, 95));
+                    }
+                } else if (have > LOW_SUPPLY_LEVEL[item] * 2) {
+                    lowSupplyWarned[item] = false;
+                }
+            }
+        }
+
         /** Once a second: top up any item with auto-restock on whenever the supply line runs below its level. */
         private void runStorageAutoRestock() {
             for (int item = 0; item < storedStock.length; item++) {
@@ -3833,6 +4052,20 @@ public class Program {
                 case KeyEvent.VK_A:
                     transferStock(item, -amount);
                     break;
+                case KeyEvent.VK_B: {
+                    int units = BUY_AMOUNT, cost = units * BUY_PRICE[item];
+                    int room = STORAGE_CAPACITY - storedStock[item];
+                    if (room < units) {
+                        storageLastAction = STORAGE_ITEM_NAMES[item] + " storage is nearly full.";
+                    } else if (currencyPoints < cost) {
+                        storageLastAction = "Not enough supply points: " + units + " " + STORAGE_ITEM_NAMES[item] + " cost " + cost + ".";
+                    } else {
+                        currencyPoints -= cost;
+                        storedStock[item] += units;
+                        storageLastAction = "Ordered " + units + " " + STORAGE_ITEM_NAMES[item] + " for " + cost + " points - delivered to storage.";
+                    }
+                    break;
+                }
                 case KeyEvent.VK_R:
                     if (storagePanelManage) {
                         autoRestock[item] = !autoRestock[item];
@@ -3982,7 +4215,7 @@ public class Program {
             int fy = panelY + 46 + rows * rowH + 6;
             g.setFont(new Font("SansSerif", Font.BOLD, 10));
             g.setColor(new Color(244, 183, 127));
-            g.drawString("W / S  SELECT     D  STORE 10     A  TAKE 10     HOLD SHIFT  x50", panelX + 24, fy + 12);
+            g.drawString("W / S  SELECT   D  STORE 10   A  TAKE 10   B  BUY " + BUY_AMOUNT + " (" + (BUY_AMOUNT * BUY_PRICE[storagePanelItems[Math.min(storagePanelRow, storagePanelItems.length - 1)]]) + " pts)   SHIFT  x50", panelX + 24, fy + 12);
             if (storagePanelManage) {
                 g.drawString("R  AUTO-RESTOCK ON/OFF     LEFT / RIGHT  RESTOCK LEVEL  (SHIFT  x50)", panelX + 24, fy + 29);
             }
@@ -4021,8 +4254,9 @@ public class Program {
                 }
             }
             // New patients walk in through the gate
-            for (int i = 0; i < DAILY_NEW_PATIENTS; i++) {
-                PatientData newcomer = new PatientData(nextPatientId++, 640 + i * 120, GATE_OUTSIDE_Y, false, 1);
+            final int arrivals = newPatientsToday();
+            for (int i = 0; i < arrivals; i++) {
+                PatientData newcomer = new PatientData(nextPatientId++, 640 + (i % 3) * 120 - (i / 3) * 60, GATE_OUTSIDE_Y, false, 1);
                 newcomer.arrivalDay = day;
                 newcomer.arriving = true;
                 patients.add(newcomer);
@@ -4031,18 +4265,29 @@ public class Program {
                 score += stackedTrashCount * 50;
                 stackedTrashCount = 0;
             }
-            food += 120;
-            water += 120;
-            medicine += 50;
-            materials += 40;
+            // the supply truck unloads into the STORAGE ROOM - move it to the supply line yourself (or switch on auto-restock)
+            StringBuilder delivered = new StringBuilder();
+            for (int item = 0; item < 4; item++) {
+                int room = STORAGE_CAPACITY - storedStock[item];
+                int residentsNow = 0;
+                for (PatientData rp : patients) if (!rp.leaving) residentsNow++;
+                int added = Math.max(0, Math.min(dailyDelivery(item, residentsNow), room));
+                storedStock[item] += added;
+                delivered.append(added).append(' ').append(STORAGE_ITEM_NAMES[item].toLowerCase()).append(item < 3 ? ", " : "");
+            }
+            addNotice("Supply truck delivered to the storage room: " + delivered + ".", new Color(245, 200, 112));
             currencyPoints += 250;
-            food -= 35;
-            water -= 30;
             waste = Math.min(100, waste + 10);
             score += 150;
-            currentEvent = "DAWN (Day " + day + "): " + DAILY_NEW_PATIENTS + " new patients arrived at the gate"
+            currentEvent = "DAWN (Day " + day + "): " + arrivals + " new patients arrived at the gate"
                     + (discharged > 0 ? ", " + discharged + " finished quarantine and are leaving." : ".");
-            addNotice("DAY " + day + ": " + DAILY_NEW_PATIENTS + " new patients are arriving.", new Color(132, 207, 228));
+            addNotice("DAY " + day + ": " + arrivals + " new patients are arriving.", new Color(132, 207, 228));
+            if (day % 5 == 0 && day <= DIFFICULTY_DAYS + 5) {
+                addNotice("The outbreak is getting worse: people fall ill more often and treatments use more supplies.", new Color(240, 140, 95));
+            }
+            if (day > 1 && arrivals > 2 && (day - 1) % 8 == 0) {
+                addNotice("More people are being sent to the shelter now - make sure you have enough doctors and beds!", new Color(240, 140, 95));
+            }
         }
 
         @Override
@@ -4068,6 +4313,7 @@ public class Program {
             } finally {
                 scene.dispose();
             }
+            renderTransition(g, screenWidth, screenHeight);
         }
 
         private void renderFrame(Graphics2D g) {
@@ -4496,6 +4742,111 @@ public class Program {
         }
 
         /** Writes the whole shelter to ~/.quarantine_haven/savegame.properties. Returns false if that failed. */
+        /**
+         * Called by the main menu's "New Game" (after the player confirmed): wipes the save file and puts everything back
+         * to day 1 - supplies, staff, patients, weather, tutorial and all.
+         */
+        public synchronized void startNewGame() {
+            try {
+                Files.deleteIfExists(savePath());
+            } catch (Exception ignored) {
+                // nothing to delete
+            }
+            long now = System.currentTimeMillis();
+            transitionStartNanos = 0L;
+            transitionAction = null;
+            pauseMenuOpen = false;
+            pauseConfirmErase = false;
+            hirePanelOpen = false;
+            storagePanelOpen = false;
+            talkTarget = null;
+            skipSaveOnExit = false;
+
+            day = 1;
+            score = 1850;
+            currencyPoints = 500;
+            power = 98;
+            waste = 22;
+            stackedTrashCount = 0;
+            food = 120;
+            water = 120;
+            medicine = 60;
+            materials = 40;
+            secondsRemaining = DAY_DURATION_SECONDS;
+            lastTickTime = now;
+            lastAutosaveMillis = now;
+            int[] startStored = {200, 200, 100, 60};
+            int[] startRestock = {120, 120, 60, 40};
+            for (int i = 0; i < 4; i++) {
+                storedStock[i] = startStored[i];
+                restockBelow[i] = startRestock[i];
+                autoRestock[i] = false;
+                lowSupplyWarned[i] = false;
+            }
+            storageLastAction = "";
+            storagePanelRow = 0;
+
+            nextPatientId = 1;
+            dischargedCount = 0;
+            departedPatients.clear();
+            patients.clear();
+            doctors.clear();
+            guards.clear();
+            receptionists.clear();
+            notices.clear();
+            float[][] startSpots = {{360, 400}, {620, 392}, {820, 408}};
+            for (int i = 0; i < START_PATIENTS; i++) {
+                PatientData pd = new PatientData(nextPatientId++, startSpots[i][0], startSpots[i][1], false, 1);
+                pd.needTimer = now;
+                patients.add(pd);
+            }
+            doctors.add(new DoctorData(300, 430, false, 1));
+            doctors.add(new DoctorData(400, 450, true, 2));
+            guards.add(new GuardData(208, 440));
+            guards.add(new GuardData(600, 450));
+            for (GuardData guard : guards) guard.flashlightAngle = Math.PI / 2;
+            for (int f = 1; f <= 3; f++) receptionists.add(new ReceptionistData(RECEPTION_X, RECEPTION_Y, f));
+
+            // weather and yard
+            puddles.clear();
+            fallingLeaves.clear();
+            leafPiles.clear();
+            weather = WEATHER_CLEAR;
+            rainIntensity = 0f;
+            rainEndedMillis = 0L;
+            nextWeatherChangeMillis = now + 75_000L;
+            nextPuddleMillis = 0L;
+            overseerTool = TOOL_NONE;
+
+            // the overseer, trucks and hiring
+            overseerX = 580;
+            overseerY = 420;
+            insideBuilding = null;
+            currentFloor = 1;
+            supplyTruckActive = false;
+            garbageTruckActive = false;
+            hireVehicleActive = false;
+            hirePendingSpawn = false;
+            hiredRoleName = "";
+            hireDelivered = false;
+
+            // the tutorial starts over
+            tutorialActive = true;
+            tutorialStep = 0;
+            tutorialStepStartMillis = now;
+            tutMoveDist = 0f;
+            tutEnteredWard = false;
+            tutEnteredStorage = false;
+            tutHireSeen = false;
+            tutDoctorPressed = false;
+            tutRecallPressed = false;
+            java.util.Arrays.fill(tutTaskPressed, false);
+            tutPatient = null;
+
+            currentEvent = "Welcome to Quarantine Haven! Follow the tutorial card (press T to skip it).";
+            addNotice("New game started - good luck, Overseer!", new Color(132, 214, 165));
+        }
+
         private synchronized boolean saveGame() {
             try {
                 Properties pr = new Properties();

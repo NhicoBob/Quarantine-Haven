@@ -47,7 +47,8 @@ public class MyGameScreen extends GameScreen {
     private long shownAtNanos = System.nanoTime();
     private Overlay overlay = Overlay.NONE;
 
-    private enum Overlay { NONE, SETTINGS, CREDITS }
+    private enum Overlay { NONE, SETTINGS, CREDITS, CONFIRM_NEW }
+    private final Rectangle confirmYes = new Rectangle(), confirmNo = new Rectangle();
 
     public MyGameScreen() {
         super("HOME-SCREEN");
@@ -57,6 +58,9 @@ public class MyGameScreen extends GameScreen {
             if (overlay != Overlay.NONE) overlay = Overlay.NONE;
             else Game.exit();
         });
+        Input.keyboard().onKeyPressed(KeyEvent.VK_ENTER, event -> { if (overlay == Overlay.CONFIRM_NEW) beginNewGame(); });
+        Input.keyboard().onKeyPressed(KeyEvent.VK_Y, event -> { if (overlay == Overlay.CONFIRM_NEW) beginNewGame(); });
+        Input.keyboard().onKeyPressed(KeyEvent.VK_N, event -> { if (overlay == Overlay.CONFIRM_NEW) overlay = Overlay.NONE; });
     }
 
     /** Every time the menu appears the title drops in again. */
@@ -69,6 +73,11 @@ public class MyGameScreen extends GameScreen {
     }
 
     private void handleClick(MouseEvent event) {
+        if (overlay == Overlay.CONFIRM_NEW) {
+            if (confirmYes.contains(event.getX(), event.getY())) beginNewGame();
+            else if (confirmNo.contains(event.getX(), event.getY())) overlay = Overlay.NONE;
+            return;
+        }
         if (overlay != Overlay.NONE) {
             overlay = Overlay.NONE;
             return;
@@ -104,12 +113,34 @@ public class MyGameScreen extends GameScreen {
         int action = pressedButton;
         pressedButton = -1;
         switch (action) {
-            case 0, 1 -> Game.screens().display("SHELTER_SCREEN");
+            case 0 -> Game.screens().display("SHELTER_SCREEN");
+            case 1 -> {
+                // a save means there is progress to lose: ask first
+                if (savedGameAvailable) overlay = Overlay.CONFIRM_NEW;
+                else beginNewGame();
+            }
             case 2 -> overlay = Overlay.SETTINGS;
             case 3 -> overlay = Overlay.CREDITS;
             case 4 -> Game.exit();
             default -> { }
         }
+    }
+
+    /** Wipes the old progress and starts day 1 (the shelter screen resets itself). */
+    private void beginNewGame() {
+        overlay = Overlay.NONE;
+        try {
+            for (Object screen : Game.screens().getAll()) {
+                if (screen instanceof Program.ShelterScreen) {
+                    ((Program.ShelterScreen) screen).startNewGame();
+                }
+            }
+        } catch (Throwable t) {
+            // fall back to simply opening the shelter
+        }
+        savedGameAvailable = false;
+        nextSaveCheckAt = System.nanoTime() + 1_500_000_000L;
+        Game.screens().display("SHELTER_SCREEN");
     }
 
     private void showToast(String message) {
@@ -432,6 +463,7 @@ public class MyGameScreen extends GameScreen {
         String title = switch (overlay) {
             case SETTINGS -> "Settings";
             case CREDITS -> "Credits";
+            case CONFIRM_NEW -> "Start a new game?";
             default -> "";
         };
         g.drawString(title, x + 38, y + 67);
@@ -442,13 +474,36 @@ public class MyGameScreen extends GameScreen {
                 g.drawString("Audio settings will be available soon.", x + 38, y + 126);
                 g.drawString("Use the mouse to navigate the menu.", x + 38, y + 160);
             }
+            case CONFIRM_NEW -> {
+                g.drawString("You already have a game in progress.", x + 38, y + 118);
+                g.drawString("Starting over erases your saved progress.", x + 38, y + 148);
+            }
             case CREDITS -> {
                 g.drawString("Quarantine Haven", x + 38, y + 126);
                 g.drawString("A survival management game.", x + 38, y + 160);
-                g.drawString("Game By:", x + 38, y + 194);
-                g.drawString("USC Wanted List", x + 38, y + 228);
             }
             default -> { }
+        }
+        if (overlay == Overlay.CONFIRM_NEW) {
+            int bw = (boxW - 38 * 2 - 18) / 2, bh = 46, by = y + boxH - bh - 28;
+            confirmYes.setBounds(x + 38, by, bw, bh);
+            confirmNo.setBounds(x + 38 + bw + 18, by, bw, bh);
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 18));
+            g.setColor(new Color(176, 40, 52));
+            g.fillRoundRect(confirmYes.x, confirmYes.y, bw, bh, 10, 10);
+            g.setColor(new Color(255, 190, 170));
+            g.drawRoundRect(confirmYes.x, confirmYes.y, bw - 1, bh - 1, 10, 10);
+            g.setColor(Color.WHITE);
+            String yes = "ERASE & START NEW (Y)";
+            g.drawString(yes, confirmYes.x + (bw - g.getFontMetrics().stringWidth(yes)) / 2, by + 29);
+            g.setColor(new Color(56, 62, 88));
+            g.fillRoundRect(confirmNo.x, confirmNo.y, bw, bh, 10, 10);
+            g.setColor(new Color(150, 158, 190));
+            g.drawRoundRect(confirmNo.x, confirmNo.y, bw - 1, bh - 1, 10, 10);
+            g.setColor(CREAM);
+            String no = "KEEP MY GAME (N)";
+            g.drawString(no, confirmNo.x + (bw - g.getFontMetrics().stringWidth(no)) / 2, by + 29);
+            return;
         }
         g.setFont(new Font("SansSerif", Font.BOLD, 15));
         g.setColor(new Color(255, 194, 132));
